@@ -1,0 +1,127 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
+
+import '../core/constants.dart';
+import '../models/device_config.dart';
+import 'logger_service.dart';
+
+class ApiService {
+  final LoggerService log;
+  late final http.Client _client;
+  
+  ApiService(this.log) {
+    // Create HTTP client that accepts self-signed certificates (development only)
+    final httpClient = HttpClient()
+      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
+        log.w('Accepting self-signed certificate from $host:$port');
+        return true; // Accept all certificates (INSECURE - development only)
+      };
+    _client = IOClient(httpClient);
+  }
+
+  Future<T> _retry<T>(Future<T> Function() fn, {String op = 'API'}) async {
+    int attempt = 0;
+    while (true) {
+      try {
+        attempt++;
+        return await fn();
+      } on SocketException catch (e) {
+        if (attempt >= AppConstants.maxApiRetries) rethrow;
+        final d = Duration(seconds: 1 << (attempt - 1));
+        log.w('$op SocketException attempt=$attempt retry in ${d.inSeconds}s: $e');
+        await Future.delayed(d);
+      } on TimeoutException catch (e) {
+        if (attempt >= AppConstants.maxApiRetries) rethrow;
+        final d = Duration(seconds: 1 << (attempt - 1));
+        log.w('$op Timeout attempt=$attempt retry in ${d.inSeconds}s: $e');
+        await Future.delayed(d);
+      }
+    }
+  }
+
+  Map<String, String> _headers({String? token}) {
+    final h = {'Accept': 'application/json', 'Content-Type': 'application/json'};
+    if (token != null && token.isNotEmpty) h['Authorization'] = 'Bearer $token';
+    return h;
+  }
+
+  Uri _u(String base, String path, [Map<String, String>? q]) {
+    final b = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+    final p = path.startsWith('/') ? path : '/$path';
+    return Uri.parse('$b$p').replace(queryParameters: q);
+  }
+
+  Future<Map<String, dynamic>?> lookupDeviceByIp(String apiBaseUrl) async {
+    return _retry(() async {
+      final res = await _client.get(_u(apiBaseUrl, '/api/device/lookup-by-ip'), headers: _headers()).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      if (j['found'] == true && j['device'] != null) return Map<String, dynamic>.from(j['device']);
+      return null;
+    }, op: 'lookupDeviceByIp');
+  }
+
+  Future<Map<String, dynamic>?> getLatestSession(DeviceConfig cfg) async {
+    // No longer requires auth token - guest endpoint
+    return _retry(() async {
+      final res = await _client.get(_u(cfg.apiBaseUrl, '/api/devices/latest-session'), headers: _headers()).timeout(const Duration(seconds: 10));
+      if (res.statusCode == 401) return {'_unauthorized': true};
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }, op: 'getLatestSession');
+  }
+
+  Future<List<Map<String, dynamic>>> getUnprintedPrintEvents(DeviceConfig cfg, {required int sessionId, DateTime? since, int limit = 50}) async {
+    // No longer requires auth token - guest endpoint
+    return _retry(() async {
+      final q = {'session_id': '$sessionId', 'limit': '$limit', if (since != null) 'since': since.toUtc().toIso8601String()};
+      final res = await _client.get(_u(cfg.apiBaseUrl, '/api/printer/unprinted-events', q), headers: _headers()).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) return [];
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      final list = (j['print_events'] as List?) ?? (j['events'] as List?) ?? const [];
+      return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }, op: 'getUnprintedPrintEvents');
+  }
+
+  Future<bool> markPrintEventPrinted(DeviceConfig cfg, int printEventId, {required DateTime printedAt, required String printerId, String? printerName, String? bluetoothAddress, String? appVersion}) async {
+    // No longer requires auth token - guest endpoint
+    return _retry(() async {
+      final body = jsonEncode({
+        'printed_at': printedAt.toUtc().toIso8601String(),
+        'printer_id': printerId,
+        'printer_name': printerName,
+        'bluetooth_address': bluetoothAddress,
+        'app_version': appVersion,
+      });
+      final res = await _client.post(_u(cfg.apiBaseUrl, '/api/printer/print-events/$printEventId/ack'), headers: _headers(), body: body).timeout(const Duration(seconds: 12));
+      return res.statusCode == 200;
+    }, op: 'markPrintEventPrinted');
+  }
+
+  Future<bool> markPrintEventFailed(DeviceConfig cfg, int printEventId, {required DateTime failedAt, required String error, required int attemptCount, String? printerName, String? appVersion}) async {
+    // No longer requires auth token - guest endpoint
+    return _retry(() async {
+      final body = jsonEncode({
+        'failed_at': failedAt.toUtc().toIso8601String(),
+        'error': error,
+        'attempt_count': attemptCount,
+        'printer_name': printerName,
+        'app_version': appVersion,
+      });
+      final res = await _client.post(_u(cfg.apiBaseUrl, '/api/print-events/$printEventId/failed'), headers: _headers(), body: body).timeout(const Duration(seconds: 12));
+      return res.statusCode == 200;
+    }, op: 'markPrintEventFailed');
+  }
+
+  Future<void> sendHeartbeat(DeviceConfig cfg, {required Map<String, dynamic> payload}) async {
+    final token = cfg.authToken ?? '';
+    if (token.isEmpty) return;
+    await _retry(() async {
+      await _client.post(_u(cfg.apiBaseUrl, '/api/printer/heartbeat'), headers: _headers(token: token), body: jsonEncode(payload)).timeout(const Duration(seconds: 12));
+      return true;
+    }, op: 'heartbeat');
+  }
+}
