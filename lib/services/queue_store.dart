@@ -1,5 +1,4 @@
 import 'package:path_provider/path_provider.dart';
-import 'package:sembast/sembast.dart';
 import 'package:sembast/sembast_io.dart';
 
 import '../models/print_job.dart';
@@ -9,7 +8,8 @@ class QueueStore {
   static const _storeName = 'print_jobs';
 
   late Database _db;
-  final StoreRef<int, Map<String, dynamic>> _store = intMapStoreFactory.store(_storeName);
+  final StoreRef<int, Map<String, dynamic>> _store =
+      intMapStoreFactory.store(_storeName);
 
   Future<void> init() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -21,11 +21,14 @@ class QueueStore {
     return v != null;
   }
 
-  Future<void> upsert(PrintJob job) async => _store.record(job.printEventId).put(_db, job.toJson(), merge: true);
+  Future<void> upsert(PrintJob job) async =>
+      _store.record(job.printEventId).put(_db, job.toJson(), merge: true);
 
   Future<List<PrintJob>> all() async {
     final records = await _store.find(_db);
-    final jobs = records.map((r) => PrintJob.fromJson(Map<String, dynamic>.from(r.value))).toList();
+    final jobs = records
+        .map((r) => PrintJob.fromJson(Map<String, dynamic>.from(r.value)))
+        .toList();
     jobs.sort((a, b) => a.createdAt.compareTo(b.createdAt));
     return jobs;
   }

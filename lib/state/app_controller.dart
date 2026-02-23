@@ -21,12 +21,16 @@ import '../services/permissions_service.dart';
 import 'app_state.dart';
 
 final loggerProvider = Provider<LoggerService>((ref) => LoggerService());
-final permissionsProvider = Provider<PermissionsService>((ref) => PermissionsService());
+final permissionsProvider =
+    Provider<PermissionsService>((ref) => PermissionsService());
 final queueStoreProvider = Provider<QueueStore>((ref) => QueueStore());
-final apiProvider = Provider<ApiService>((ref) => ApiService(ref.read(loggerProvider)));
-final printerServiceProvider = Provider<PrinterService>((ref) => PrinterBlueThermal(ref.read(loggerProvider)));
+final apiProvider =
+    Provider<ApiService>((ref) => ApiService(ref.read(loggerProvider)));
+final printerServiceProvider = Provider<PrinterService>(
+    (ref) => PrinterBlueThermal(ref.read(loggerProvider)));
 
-final appControllerProvider = StateNotifierProvider<AppController, AppState>((ref) {
+final appControllerProvider =
+    StateNotifierProvider<AppController, AppState>((ref) {
   final cfg = DeviceConfig(
     apiBaseUrl: AppConstants.defaultApiBaseUrl,
     wsUrl: AppConstants.defaultWsUrl,
@@ -70,12 +74,21 @@ class AppController extends StateNotifier<AppState> {
         ));
 
   Duration get uptime => DateTime.now().toUtc().difference(_bootedAt);
-  int get printingCount => state.queue.where((j) => j.status == PrintJobStatus.printing).length;
-  int get awaitingAckCount => state.queue.where((j) => j.status == PrintJobStatus.printed_awaiting_ack).length;
-  int get reconnectAttemptTotal => state.queue.fold(0, (sum, j) => sum + j.printerReconnectAttempts);
-  int get reconnectAttemptMax => state.queue.fold(0, (max, j) => j.printerReconnectAttempts > max ? j.printerReconnectAttempts : max);
-  DateTime? get lastReconnectAttempt => _latestDate(state.queue.map((j) => j.lastPrinterReconnectAttempt));
-  DateTime? get lastJobTime => _latestDate(state.queue.map((j) => j.printedAt ?? j.createdAt));
+  int get printingCount =>
+      state.queue.where((j) => j.status == PrintJobStatus.printing).length;
+  int get awaitingAckCount => state.queue
+      .where((j) => j.status == PrintJobStatus.printed_awaiting_ack)
+      .length;
+  int get reconnectAttemptTotal =>
+      state.queue.fold(0, (sum, j) => sum + j.printerReconnectAttempts);
+  int get reconnectAttemptMax => state.queue.fold(
+      0,
+      (max, j) =>
+          j.printerReconnectAttempts > max ? j.printerReconnectAttempts : max);
+  DateTime? get lastReconnectAttempt =>
+      _latestDate(state.queue.map((j) => j.lastPrinterReconnectAttempt));
+  DateTime? get lastJobTime =>
+      _latestDate(state.queue.map((j) => j.printedAt ?? j.createdAt));
 
   List<PrintJob> recentJobs({int limit = 5}) {
     if (limit <= 0) return const [];
@@ -119,19 +132,22 @@ class AppController extends StateNotifier<AppState> {
 
     log.i('STEP 1: Device authentication');
     await _ensureDeviceAuth();
-    log.i('Device auth complete: deviceId=${state.config.deviceId ?? "NULL"}, hasToken=${(state.config.authToken ?? "").isNotEmpty}');
+    log.i(
+        'Device auth complete: deviceId=${state.config.deviceId ?? "NULL"}, hasToken=${(state.config.authToken ?? "").isNotEmpty}');
 
     log.i('STEP 2: Session resolution');
     await _resolveSession();
-    log.i('Session resolution complete: sessionId=${state.sessionId ?? "NULL"}');
+    log.i(
+        'Session resolution complete: sessionId=${state.sessionId ?? "NULL"}');
 
     log.i('STEP 3: Start WebSocket');
     _startWs();
-    
+
     log.i('STEP 4: Start Polling');
     await _startPolling();
-    log.i('Polling service status: ${_polling != null ? "INITIALIZED" : "NULL"}');
-    
+    log.i(
+        'Polling service status: ${_polling != null ? "INITIALIZED" : "NULL"}');
+
     _startHeartbeat();
     _startQueueProcessor();
 
@@ -145,27 +161,33 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> _ensureDeviceAuth() async {
     final cfg = state.config;
-    if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty) return;
+    if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty)
+      return;
 
     state = state.copyWith(authenticating: true);
     try {
       log.i('Attempting device lookup by IP from ${cfg.apiBaseUrl}');
-      final device = await ref.read(apiProvider).lookupDeviceByIp(cfg.apiBaseUrl);
+      final device =
+          await ref.read(apiProvider).lookupDeviceByIp(cfg.apiBaseUrl);
       if (device == null) {
-        log.w('Device lookup returned null - device not registered or API failed');
-        state = state.copyWith(lastError: 'Device not registered (lookup-by-ip not found)');
+        log.w(
+            'Device lookup returned null - device not registered or API failed');
+        state = state.copyWith(
+            lastError: 'Device not registered (lookup-by-ip not found)');
         return;
       }
 
       final deviceId = (device['device_id'] ?? '').toString();
       final authToken = (device['auth_token'] ?? '').toString();
-      log.i('Device lookup successful: device_id=$deviceId, has_token=${authToken.isNotEmpty}');
+      log.i(
+          'Device lookup successful: device_id=$deviceId, has_token=${authToken.isNotEmpty}');
 
       final next = cfg.copyWith(
         deviceId: deviceId,
         authToken: authToken,
         printerName: (device['printer_name'] ?? cfg.printerName)?.toString(),
-        printerAddress: (device['bluetooth_address'] ?? cfg.printerAddress)?.toString(),
+        printerAddress:
+            (device['bluetooth_address'] ?? cfg.printerAddress)?.toString(),
       );
 
       await _saveConfig(next);
@@ -189,7 +211,8 @@ class AppController extends StateNotifier<AppState> {
     log.i('Session API response: $res');
     if (res['_unauthorized'] == true) {
       log.e('Session API returned 401 unauthorized');
-      state = state.copyWith(lastError: 'Unauthorized (401). Re-register device.');
+      state =
+          state.copyWith(lastError: 'Unauthorized (401). Re-register device.');
       return;
     }
     final session = res['session'];
@@ -217,10 +240,11 @@ class AppController extends StateNotifier<AppState> {
     final sessionId = state.sessionId;
     log.i('Attempting to start polling service...');
     log.i('Session ID: ${sessionId ?? "NULL"}');
-    
+
     if (sessionId == null) {
       log.w('⚠️ POLLING NOT STARTED: Session ID is null');
-      log.w('Polling requires an active table session. WebSocket will handle print events.');
+      log.w(
+          'Polling requires an active table session. WebSocket will handle print events.');
       return;
     }
 
@@ -236,8 +260,10 @@ class AppController extends StateNotifier<AppState> {
         }
       },
     );
-    log.i('Starting polling with interval: ${AppConstants.pollingInterval.inSeconds}s');
-    await _polling!.start(state.config, sessionId: sessionId, interval: AppConstants.pollingInterval);
+    log.i(
+        'Starting polling with interval: ${AppConstants.pollingInterval.inSeconds}s');
+    await _polling!.start(state.config,
+        sessionId: sessionId, interval: AppConstants.pollingInterval);
     log.i('✅ Polling service started successfully');
   }
 
@@ -258,10 +284,12 @@ class AppController extends StateNotifier<AppState> {
       try {
         final printer = ref.read(printerServiceProvider);
         final connected = await printer.isConnected();
-        
+
         if (state.printer.connected != connected) {
-          state = state.copyWith(printer: state.printer.copyWith(connected: connected));
-          log.i('Printer status changed: ${connected ? "Connected" : "Disconnected"}');
+          state = state.copyWith(
+              printer: state.printer.copyWith(connected: connected));
+          log.i(
+              'Printer status changed: ${connected ? "Connected" : "Disconnected"}');
         }
       } catch (e) {
         // Suppress errors to avoid log spam
@@ -273,10 +301,9 @@ class AppController extends StateNotifier<AppState> {
     _connectivitySub?.cancel();
     _connectivitySub = Connectivity().onConnectivityChanged.listen((results) {
       final connected = results.any((r) =>
-        r == ConnectivityResult.wifi ||
-        r == ConnectivityResult.ethernet ||
-        r == ConnectivityResult.mobile
-      );
+          r == ConnectivityResult.wifi ||
+          r == ConnectivityResult.ethernet ||
+          r == ConnectivityResult.mobile);
       if (state.networkConnected != connected) {
         state = state.copyWith(networkConnected: connected);
         log.i('Network connectivity changed: $connected');
@@ -286,10 +313,9 @@ class AppController extends StateNotifier<AppState> {
     // Check initial state
     Connectivity().checkConnectivity().then((results) {
       final connected = results.any((r) =>
-        r == ConnectivityResult.wifi ||
-        r == ConnectivityResult.ethernet ||
-        r == ConnectivityResult.mobile
-      );
+          r == ConnectivityResult.wifi ||
+          r == ConnectivityResult.ethernet ||
+          r == ConnectivityResult.mobile);
       state = state.copyWith(networkConnected: connected);
     });
   }
@@ -301,8 +327,11 @@ class AppController extends StateNotifier<AppState> {
       api: ref.read(apiProvider),
       buildPayload: () {
         final now = DateTime.now().toUtc();
-        final successes = state.queue.where((j) => j.status == PrintJobStatus.success).toList()
-          ..sort((a, b) => (a.printedAt ?? a.createdAt).compareTo(b.printedAt ?? b.createdAt));
+        final successes = state.queue
+            .where((j) => j.status == PrintJobStatus.success)
+            .toList()
+          ..sort((a, b) => (a.printedAt ?? a.createdAt)
+              .compareTo(b.printedAt ?? b.createdAt));
         final last = successes.isEmpty ? null : successes.last;
 
         return {
@@ -328,11 +357,13 @@ class AppController extends StateNotifier<AppState> {
 
   void _startQueueProcessor() {
     _queueTimer?.cancel();
-    _queueTimer = Timer.periodic(AppConstants.queueTick, (_) => _processQueue());
-    
+    _queueTimer =
+        Timer.periodic(AppConstants.queueTick, (_) => _processQueue());
+
     // Start ACK flush service: retry ACKs that failed
     _ackFlushTimer?.cancel();
-    _ackFlushTimer = Timer.periodic(const Duration(seconds: 30), (_) => flushPendingAcks());
+    _ackFlushTimer =
+        Timer.periodic(const Duration(seconds: 30), (_) => flushPendingAcks());
   }
 
   Future<void> enqueueFromPayload(Map<String, dynamic> payload) async {
@@ -340,10 +371,12 @@ class AppController extends StateNotifier<AppState> {
     final peid = payload['print_event_id'] ?? payload['printEventId'];
     final orderId = payload['order_id'] ?? payload['orderId'];
     // Device_id MUST be in the payload; do not default to config.deviceId
-    final deviceId = (payload['device_id'] ?? payload['deviceId'] ?? '').toString();
+    final deviceId =
+        (payload['device_id'] ?? payload['deviceId'] ?? '').toString();
     final sessionId = payload['session_id'] ?? payload['sessionId'];
 
-    log.i('Payload validation: print_event_id=$peid, order_id=$orderId, device_id=$deviceId, session_id=$sessionId');
+    log.i(
+        'Payload validation: print_event_id=$peid, order_id=$orderId, device_id=$deviceId, session_id=$sessionId');
 
     // P3-RELX-5: Strict validation - reject payload if print_event_id is missing
     if (peid == null) {
@@ -354,22 +387,29 @@ class AppController extends StateNotifier<AppState> {
     // M3.5-4: Positive ID validation - reject print_event_id <= 0
     final printEventId = peid is int ? peid : int.tryParse(peid.toString());
     if (printEventId == null || printEventId <= 0) {
-      log.w('Invalid print_event_id: $printEventId (must be > 0) - rejecting. Payload: $payload');
+      log.w(
+          'Invalid print_event_id: $printEventId (must be > 0) - rejecting. Payload: $payload');
       return;
     }
 
     // C4: Device_id filtering - TEMPORARILY DISABLED for emergency printing
     // TODO: Re-enable after device lookup is working
     final myDeviceId = state.config.deviceId ?? '';
-    if (myDeviceId.isNotEmpty && deviceId.isNotEmpty && deviceId != myDeviceId) {
-      log.w('Cross-device event rejected: print_event_id=$printEventId deviceId=$deviceId (mine=$myDeviceId)');
+    if (myDeviceId.isNotEmpty &&
+        deviceId.isNotEmpty &&
+        deviceId != myDeviceId) {
+      log.w(
+          'Cross-device event rejected: print_event_id=$printEventId deviceId=$deviceId (mine=$myDeviceId)');
       return;
     } else if (myDeviceId.isEmpty) {
-      log.w('Device ID not configured - accepting event anyway (EMERGENCY MODE)');
+      log.w(
+          'Device ID not configured - accepting event anyway (EMERGENCY MODE)');
     }
 
     final oId = orderId is int ? orderId : int.tryParse(orderId.toString());
-    final sId = sessionId == null ? null : (sessionId is int ? sessionId : int.tryParse(sessionId.toString()));
+    final sId = sessionId == null
+        ? null
+        : (sessionId is int ? sessionId : int.tryParse(sessionId.toString()));
 
     if (oId == null || deviceId.isEmpty) {
       log.w('Invalid payload skipped: $payload');
@@ -382,9 +422,14 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
 
-    final printType = (payload['print_type'] ?? payload['printType'] ?? 'INITIAL').toString().toUpperCase();
+    final printType =
+        (payload['print_type'] ?? payload['printType'] ?? 'INITIAL')
+            .toString()
+            .toUpperCase();
     final refill = payload['refill_number'] ?? payload['refillNumber'];
-    final refillNo = refill == null ? null : (refill is int ? refill : int.tryParse(refill.toString()));
+    final refillNo = refill == null
+        ? null
+        : (refill is int ? refill : int.tryParse(refill.toString()));
 
     final job = PrintJob(
       printEventId: printEventId,
@@ -413,23 +458,32 @@ class AppController extends StateNotifier<AppState> {
     final printer = ref.read(printerServiceProvider);
     final ok = await printer.connectByAddress(address);
     if (ok) {
-      final cfg = state.config.copyWith(printerAddress: address, printerName: name ?? state.config.printerName);
+      final cfg = state.config.copyWith(
+          printerAddress: address,
+          printerName: name ?? state.config.printerName);
       await _saveConfig(cfg);
-      state = state.copyWith(config: cfg, printer: state.printer.copyWith(connected: true, address: address, name: name, error: null));
-      
+      state = state.copyWith(
+          config: cfg,
+          printer: state.printer.copyWith(
+              connected: true, address: address, name: name, error: null));
+
       // M3.5-3: Reset printer reconnect attempts on successful connection
       final store = ref.read(queueStoreProvider);
       final jobs = await store.all();
       for (final job in jobs.where((j) => j.printerReconnectAttempts > 0)) {
-        await store.updateJob(job.printEventId, (old) => old.copyWith(
-          printerReconnectAttempts: 0,
-          lastPrinterReconnectAttempt: null,
-        ));
+        await store.updateJob(
+            job.printEventId,
+            (old) => old.copyWith(
+                  printerReconnectAttempts: 0,
+                  lastPrinterReconnectAttempt: null,
+                ));
       }
       state = state.copyWith(queue: await store.all());
       return true;
     } else {
-      state = state.copyWith(printer: state.printer.copyWith(connected: false, error: 'Connect failed'));
+      state = state.copyWith(
+          printer: state.printer
+              .copyWith(connected: false, error: 'Connect failed'));
       return false;
     }
   }
@@ -449,7 +503,8 @@ class AppController extends StateNotifier<AppState> {
 
     // If backoff window hasn't elapsed yet, don't reconnect
     if (now.isBefore(nextRetryTime)) {
-      log.d('Printer reconnect backoff active for job ${job.printEventId} (attempt ${attempts}/5, wait ${nextRetryTime.difference(now).inSeconds}s)');
+      log.d(
+          'Printer reconnect backoff active for job ${job.printEventId} (attempt $attempts/5, wait ${nextRetryTime.difference(now).inSeconds}s)');
       return false;
     }
 
@@ -463,18 +518,24 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> testPrint() async {
     final ok = await ref.read(printerServiceProvider).testPrint();
-    if (!ok) state = state.copyWith(lastError: 'Test print failed (printer not connected?)');
+    if (!ok)
+      state = state.copyWith(
+          lastError: 'Test print failed (printer not connected?)');
   }
 
   Future<void> retryJob(int printEventId) async {
     final store = ref.read(queueStoreProvider);
-    await store.updateJob(printEventId, (old) => old.copyWith(status: PrintJobStatus.pending, retryCount: 0, lastError: null));
+    await store.updateJob(
+        printEventId,
+        (old) => old.copyWith(
+            status: PrintJobStatus.pending, retryCount: 0, lastError: null));
     state = state.copyWith(queue: await store.all());
   }
 
   Future<void> cancelJob(int printEventId) async {
     final store = ref.read(queueStoreProvider);
-    await store.updateJob(printEventId, (old) => old.copyWith(status: PrintJobStatus.cancelled));
+    await store.updateJob(
+        printEventId, (old) => old.copyWith(status: PrintJobStatus.cancelled));
     state = state.copyWith(queue: await store.all());
   }
 
@@ -489,11 +550,13 @@ class AppController extends StateNotifier<AppState> {
     log.i('Polling service: ${polling != null ? "INITIALIZED" : "NULL"}');
     log.i('Session ID: ${state.sessionId ?? "NULL"}');
     log.i('Device ID: ${state.config.deviceId ?? "NULL"}');
-    
+
     if (polling == null) {
       log.w('⚠️ Force poll FAILED: Polling service not initialized');
-      log.w('Reason: Polling requires session ID, currently: ${state.sessionId ?? "NULL"}');
-      log.w('Workaround: WebSocket is active and will receive print events automatically');
+      log.w(
+          'Reason: Polling requires session ID, currently: ${state.sessionId ?? "NULL"}');
+      log.w(
+          'Workaround: WebSocket is active and will receive print events automatically');
       return;
     }
 
@@ -516,16 +579,20 @@ class AppController extends StateNotifier<AppState> {
           // M3.5-3: Check printer reconnect backoff before attempting reconnection
           final store = ref.read(queueStoreProvider);
           final jobs = await store.all();
-          final pendingJobs = jobs.where((j) => j.status == PrintJobStatus.pending).toList();
+          final pendingJobs =
+              jobs.where((j) => j.status == PrintJobStatus.pending).toList();
           final next = pendingJobs.isEmpty ? null : pendingJobs.first;
-          
+
           if (next != null) {
             if (next.printerReconnectAttempts >= 5) {
-              log.w('Printer reconnect max attempts (5) exceeded for job ${next.printEventId}, marking as failed');
-              await store.updateJob(next.printEventId, (old) => old.copyWith(
-                status: PrintJobStatus.failed,
-                lastError: 'Printer reconnect max attempts exceeded',
-              ));
+              log.w(
+                  'Printer reconnect max attempts (5) exceeded for job ${next.printEventId}, marking as failed');
+              await store.updateJob(
+                  next.printEventId,
+                  (old) => old.copyWith(
+                        status: PrintJobStatus.failed,
+                        lastError: 'Printer reconnect max attempts exceeded',
+                      ));
               state = state.copyWith(queue: await store.all());
               return;
             }
@@ -535,40 +602,50 @@ class AppController extends StateNotifier<AppState> {
               return;
             }
 
-            final okReconnect = await connectPrinterByAddress(state.config.printerAddress!, name: state.config.printerName);
+            final okReconnect = await connectPrinterByAddress(
+                state.config.printerAddress!,
+                name: state.config.printerName);
             if (!okReconnect) {
               final now = DateTime.now().toUtc();
               final newAttempts = next.printerReconnectAttempts + 1;
               final failed = newAttempts >= 5;
 
-              await store.updateJob(next.printEventId, (old) => old.copyWith(
-                printerReconnectAttempts: newAttempts,
-                lastPrinterReconnectAttempt: now,
-                status: failed ? PrintJobStatus.failed : old.status,
-                lastError: failed ? 'Printer reconnect max attempts exceeded' : 'Printer reconnect failed',
-              ));
+              await store.updateJob(
+                  next.printEventId,
+                  (old) => old.copyWith(
+                        printerReconnectAttempts: newAttempts,
+                        lastPrinterReconnectAttempt: now,
+                        status: failed ? PrintJobStatus.failed : old.status,
+                        lastError: failed
+                            ? 'Printer reconnect max attempts exceeded'
+                            : 'Printer reconnect failed',
+                      ));
               state = state.copyWith(queue: await store.all());
               return;
             }
           } else {
-            await connectPrinterByAddress(state.config.printerAddress!, name: state.config.printerName);
+            await connectPrinterByAddress(state.config.printerAddress!,
+                name: state.config.printerName);
           }
         }
 
         final connected = await printer.isConnected();
-        state = state.copyWith(printer: state.printer.copyWith(connected: connected));
+        state = state.copyWith(
+            printer: state.printer.copyWith(connected: connected));
 
         if (!connected) return;
 
         final store = ref.read(queueStoreProvider);
         final jobs = await store.all();
-        final next = jobs.where((j) => j.status == PrintJobStatus.pending).isEmpty
-            ? null
-            : jobs.where((j) => j.status == PrintJobStatus.pending).first;
+        final next =
+            jobs.where((j) => j.status == PrintJobStatus.pending).isEmpty
+                ? null
+                : jobs.where((j) => j.status == PrintJobStatus.pending).first;
 
         if (next == null) return;
 
-        await store.updateJob(next.printEventId, (old) => old.copyWith(status: PrintJobStatus.printing));
+        await store.updateJob(next.printEventId,
+            (old) => old.copyWith(status: PrintJobStatus.printing));
         state = state.copyWith(queue: await store.all());
 
         final okPrint = await printer.printLines(receipt.build(next.payload));
@@ -580,13 +657,15 @@ class AppController extends StateNotifier<AppState> {
         await printer.cut();
 
         // C2: Mark as printed_awaiting_ack first, queue for retry if ACK fails
-        await store.updateJob(next.printEventId, (old) => old.copyWith(
-          status: PrintJobStatus.printed_awaiting_ack,
-          printedAt: DateTime.now().toUtc(),
-          lastError: null,
-          ackAttempts: 0,
-          lastAckAttempt: DateTime.now().toUtc(),
-        ));
+        await store.updateJob(
+            next.printEventId,
+            (old) => old.copyWith(
+                  status: PrintJobStatus.printed_awaiting_ack,
+                  printedAt: DateTime.now().toUtc(),
+                  lastError: null,
+                  ackAttempts: 0,
+                  lastAckAttempt: DateTime.now().toUtc(),
+                ));
 
         final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
               state.config,
@@ -600,10 +679,14 @@ class AppController extends StateNotifier<AppState> {
 
         if (ackOk) {
           // ACK succeeded: mark success
-          await store.updateJob(next.printEventId, (old) => old.copyWith(status: PrintJobStatus.success, lastError: null));
+          await store.updateJob(
+              next.printEventId,
+              (old) => old.copyWith(
+                  status: PrintJobStatus.success, lastError: null));
         } else {
           // ACK failed: leave as printed_awaiting_ack for flush service to retry
-          await store.updateJob(next.printEventId, (old) => old.copyWith(lastError: 'ACK failed, queued for retry'));
+          await store.updateJob(next.printEventId,
+              (old) => old.copyWith(lastError: 'ACK failed, queued for retry'));
         }
         state = state.copyWith(queue: await store.all());
       } catch (e) {
@@ -617,7 +700,12 @@ class AppController extends StateNotifier<AppState> {
     final nextRetry = job.retryCount + 1;
 
     if (nextRetry >= AppConstants.maxPrintAttempts) {
-      await store.updateJob(job.printEventId, (old) => old.copyWith(status: PrintJobStatus.failed, retryCount: nextRetry, lastError: error));
+      await store.updateJob(
+          job.printEventId,
+          (old) => old.copyWith(
+              status: PrintJobStatus.failed,
+              retryCount: nextRetry,
+              lastError: error));
       state = state.copyWith(queue: await store.all());
 
       await ref.read(apiProvider).markPrintEventFailed(
@@ -633,7 +721,12 @@ class AppController extends StateNotifier<AppState> {
     }
 
     final delaySeconds = 1 << (nextRetry - 1);
-    await store.updateJob(job.printEventId, (old) => old.copyWith(status: PrintJobStatus.pending, retryCount: nextRetry, lastError: error));
+    await store.updateJob(
+        job.printEventId,
+        (old) => old.copyWith(
+            status: PrintJobStatus.pending,
+            retryCount: nextRetry,
+            lastError: error));
     state = state.copyWith(queue: await store.all());
     await Future.delayed(Duration(seconds: delaySeconds));
   }
@@ -645,9 +738,11 @@ class AppController extends StateNotifier<AppState> {
       try {
         final store = ref.read(queueStoreProvider);
         final jobs = await store.all();
-        
+
         // Find jobs waiting for ACK acknowledgement
-        final pending = jobs.where((j) => j.status == PrintJobStatus.printed_awaiting_ack).toList();
+        final pending = jobs
+            .where((j) => j.status == PrintJobStatus.printed_awaiting_ack)
+            .toList();
         if (pending.isEmpty) return;
 
         log.i('Flushing ${pending.length} pending ACKs');
@@ -658,11 +753,14 @@ class AppController extends StateNotifier<AppState> {
 
           // Check if we should retry: max 3 attempts with exponential backoff (2s, 4s, 8s)
           if (ackAttempts >= 3) {
-            log.w('ACK max retries exceeded for print_event_id=${job.printEventId}, marking as failed');
-            await store.updateJob(job.printEventId, (old) => old.copyWith(
-              status: PrintJobStatus.failed,
-              lastError: 'ACK failed after 3 retries',
-            ));
+            log.w(
+                'ACK max retries exceeded for print_event_id=${job.printEventId}, marking as failed');
+            await store.updateJob(
+                job.printEventId,
+                (old) => old.copyWith(
+                      status: PrintJobStatus.failed,
+                      lastError: 'ACK failed after 3 retries',
+                    ));
             state = state.copyWith(queue: await store.all());
             continue;
           }
@@ -671,57 +769,70 @@ class AppController extends StateNotifier<AppState> {
           // ackAttempts=0 (no failures) → no backoff, can attempt immediately
           // ackAttempts=1 (one failure) → need to wait backoff[0]=2s before next attempt
           // ackAttempts=2 (two failures) → need to wait backoff[1]=4s before next attempt
-          final backoffSeconds = ackAttempts > 0 ? [2, 4, 8][ackAttempts - 1] : 0;
-          final nextRetryTime = lastAttempt?.add(Duration(seconds: backoffSeconds));
-          
+          final backoffSeconds =
+              ackAttempts > 0 ? [2, 4, 8][ackAttempts - 1] : 0;
+          final nextRetryTime =
+              lastAttempt?.add(Duration(seconds: backoffSeconds));
+
           // If we have a last attempt time and backoff window is active, skip
           if (nextRetryTime != null && DateTime.now().isBefore(nextRetryTime)) {
-            log.d('Skipping ACK retry for print_event_id=${job.printEventId}, backoff in progress');
+            log.d(
+                'Skipping ACK retry for print_event_id=${job.printEventId}, backoff in progress');
             continue;
           }
-          
+
           // Special case: if lastAckAttempt is very recent (< 1 second), also skip
           // This prevents rapid retry loops even if ackAttempts hasn't been incremented yet
-          if (lastAttempt != null && DateTime.now().difference(lastAttempt).inSeconds < 1) {
-            log.d('Skipping ACK retry for print_event_id=${job.printEventId}, too soon since last attempt');
+          if (lastAttempt != null &&
+              DateTime.now().difference(lastAttempt).inSeconds < 1) {
+            log.d(
+                'Skipping ACK retry for print_event_id=${job.printEventId}, too soon since last attempt');
             continue;
           }
 
           // Attempt ACK
-          log.i('Retrying ACK for print_event_id=${job.printEventId} (attempt ${ackAttempts + 1}/3)');
+          log.i(
+              'Retrying ACK for print_event_id=${job.printEventId} (attempt ${ackAttempts + 1}/3)');
           final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
-            state.config,
-            job.printEventId,
-            printedAt: job.printedAt ?? DateTime.now().toUtc(),
-            printerId: state.config.printerId,
-            printerName: state.config.printerName,
-            bluetoothAddress: state.config.printerAddress,
-            appVersion: '1.0.0+1',
-          );
+                state.config,
+                job.printEventId,
+                printedAt: job.printedAt ?? DateTime.now().toUtc(),
+                printerId: state.config.printerId,
+                printerName: state.config.printerName,
+                bluetoothAddress: state.config.printerAddress,
+                appVersion: '1.0.0+1',
+              );
 
           if (ackOk) {
             log.i('ACK succeeded for print_event_id=${job.printEventId}');
-            await store.updateJob(job.printEventId, (old) => old.copyWith(
-              status: PrintJobStatus.success,
-              lastError: null,
-            ));
+            await store.updateJob(
+                job.printEventId,
+                (old) => old.copyWith(
+                      status: PrintJobStatus.success,
+                      lastError: null,
+                    ));
           } else {
             // Increment attempt counter and update last attempt time
             final newAttempts = (job.ackAttempts ?? 0) + 1;
-            
+
             // Check if we've exceeded max retries after this failure
             if (newAttempts >= 3) {
-              log.w('ACK max retries exceeded for print_event_id=${job.printEventId}, marking as failed');
-              await store.updateJob(job.printEventId, (old) => old.copyWith(
-                status: PrintJobStatus.failed,
-                lastError: 'ACK failed after 3 retries',
-              ));
+              log.w(
+                  'ACK max retries exceeded for print_event_id=${job.printEventId}, marking as failed');
+              await store.updateJob(
+                  job.printEventId,
+                  (old) => old.copyWith(
+                        status: PrintJobStatus.failed,
+                        lastError: 'ACK failed after 3 retries',
+                      ));
             } else {
-              await store.updateJob(job.printEventId, (old) => old.copyWith(
-                ackAttempts: newAttempts,
-                lastAckAttempt: DateTime.now().toUtc(),
-                lastError: 'ACK failed, retry scheduled',
-              ));
+              await store.updateJob(
+                  job.printEventId,
+                  (old) => old.copyWith(
+                        ackAttempts: newAttempts,
+                        lastAckAttempt: DateTime.now().toUtc(),
+                        lastError: 'ACK failed, retry scheduled',
+                      ));
             }
           }
           state = state.copyWith(queue: await store.all());
@@ -740,30 +851,80 @@ class AppController extends StateNotifier<AppState> {
     _startHeartbeat();
   }
 
+  /// Register this device with the backend using a one-time code.
+  /// On success saves the returned auth token + device ID and reconnects.
+  /// Returns null on success, or an error message string on failure.
+  Future<String?> registerDevice(
+      {required String name, required String code}) async {
+    final apiBaseUrl = state.config.apiBaseUrl;
+    log.i('Registering device: name=$name, apiBaseUrl=$apiBaseUrl');
+
+    Map<String, dynamic>? res;
+    try {
+      res = await ref.read(apiProvider).registerDevice(apiBaseUrl,
+          name: name, code: code, appVersion: '1.0.0+1');
+    } catch (e) {
+      log.e('registerDevice exception: $e');
+      return 'Network error: $e';
+    }
+
+    if (res == null) return 'No response from server';
+
+    if (res['_error'] == true) {
+      final body = res['body'];
+      final msg = (body is Map ? body['message'] ?? body['error'] : null) ??
+          'Registration failed (${res['status']})';
+      log.w('registerDevice failed: $msg');
+      return msg.toString();
+    }
+
+    final token = (res['token'] ?? '').toString();
+    final device = res['device'];
+    final deviceId = (device is Map ? device['id'] : null)?.toString() ?? '';
+
+    if (token.isEmpty || deviceId.isEmpty) {
+      return 'Invalid response: missing token or device id';
+    }
+
+    final next = state.config.copyWith(authToken: token, deviceId: deviceId);
+    await _saveConfig(next);
+    state = state.copyWith(config: next);
+    log.i('✅ Device registered: device_id=$deviceId');
+
+    // Reconnect with new credentials
+    _startWs();
+    await _resolveSession();
+    await _startPolling();
+    _startHeartbeat();
+
+    return null; // success
+  }
+
   Future<void> _loadConfig() async {
     final sp = await SharedPreferences.getInstance();
-    
+
     // Migration: Auto-upgrade old HTTP URLs to HTTPS
-    var apiBaseUrl = sp.getString('apiBaseUrl') ?? AppConstants.defaultApiBaseUrl;
-    var wsUrl = sp.getString('wsUrl') ?? AppConstants.defaultWsUrl;
-    
+    var apiBaseUrl =
+        sp.getString('apiBaseUrl') ?? AppConstants.defaultApiBaseUrl;
+    final reverbAppKey =
+        sp.getString('reverbAppKey') ?? AppConstants.defaultReverbAppKey;
+
     if (apiBaseUrl.startsWith('http://')) {
       apiBaseUrl = apiBaseUrl.replaceFirst('http://', 'https://');
       await sp.setString('apiBaseUrl', apiBaseUrl);
       log.i('Migrated API URL to HTTPS: $apiBaseUrl');
     }
-    
-    // Force migration: any ws:// URL or :6001 port gets replaced with new WSS proxy
-    if (wsUrl.startsWith('ws://') || wsUrl.contains(':6001') || !wsUrl.contains('/reverb')) {
-      log.i('Old WS URL detected: $wsUrl');
-      wsUrl = AppConstants.defaultWsUrl; // Force new WSS proxy URL
-      await sp.setString('wsUrl', wsUrl);
-      log.i('Migrated WS URL to WSS proxy: $wsUrl');
-    }
-    
+
+    // Always re-derive the WS URL from apiBaseUrl + reverbAppKey so it stays in sync.
+    // This replaces the old :6001 / ws:// migration and ensures any server change
+    // automatically propagates to the WebSocket connection.
+    final wsUrl = AppConstants.deriveWsUrl(apiBaseUrl, appKey: reverbAppKey);
+    await sp.setString('wsUrl', wsUrl);
+
     final cfg = DeviceConfig(
       apiBaseUrl: apiBaseUrl,
       wsUrl: wsUrl,
+      reverbAppKey: reverbAppKey,
       deviceId: sp.getString('deviceId'),
       authToken: sp.getString('authToken'),
       printerName: sp.getString('printerName'),
@@ -777,22 +938,26 @@ class AppController extends StateNotifier<AppState> {
     final sp = await SharedPreferences.getInstance();
     await sp.setString('apiBaseUrl', cfg.apiBaseUrl);
     await sp.setString('wsUrl', cfg.wsUrl);
+    await sp.setString('reverbAppKey', cfg.reverbAppKey);
     if (cfg.deviceId != null) await sp.setString('deviceId', cfg.deviceId!);
     if (cfg.authToken != null) await sp.setString('authToken', cfg.authToken!);
-    if (cfg.printerName != null) await sp.setString('printerName', cfg.printerName!);
-    if (cfg.printerAddress != null) await sp.setString('printerAddress', cfg.printerAddress!);
+    if (cfg.printerName != null)
+      await sp.setString('printerName', cfg.printerName!);
+    if (cfg.printerAddress != null)
+      await sp.setString('printerAddress', cfg.printerAddress!);
     await sp.setString('printerId', cfg.printerId);
   }
 
   /// Reprint an order by creating a new print job with the same payload
   Future<void> reprintOrder(PrintJob original) async {
-    log.i('Reprint requested for order_id=${original.orderId}, print_event_id=${original.printEventId}');
-    
+    log.i(
+        'Reprint requested for order_id=${original.orderId}, print_event_id=${original.printEventId}');
+
     final store = ref.read(queueStoreProvider);
-    
+
     // Create a new print job with a unique ID (use negative IDs for reprints to avoid conflicts)
     final reprintId = -(DateTime.now().millisecondsSinceEpoch);
-    
+
     final reprintJob = PrintJob(
       printEventId: reprintId,
       deviceId: original.deviceId,
@@ -812,8 +977,9 @@ class AppController extends StateNotifier<AppState> {
 
     await store.upsert(reprintJob);
     state = state.copyWith(queue: await store.all());
-    
-    log.i('Reprint job created with temp ID=$reprintId for order_id=${original.orderId}');
+
+    log.i(
+        'Reprint job created with temp ID=$reprintId for order_id=${original.orderId}');
   }
 
   @override

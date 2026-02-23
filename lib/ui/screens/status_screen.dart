@@ -16,21 +16,37 @@ class StatusScreen extends ConsumerWidget {
     final testPrint = ref.read(testPrintServiceProvider);
 
     final queue = st.queue;
-    final printingCount = queue.where((j) => j.status == PrintJobStatus.printing).length;
-    final awaitingAckCount = queue.where((j) => j.status == PrintJobStatus.printed_awaiting_ack).length;
-    final lastJobTime = queue.isEmpty ? null : queue.map((j) => j.createdAt).whereType<DateTime>().fold<DateTime?>(null, (prev, dt) {
-      if (prev == null) return dt;
-      return dt!.isAfter(prev) ? dt : prev;
-    });
+    final printingCount =
+        queue.where((j) => j.status == PrintJobStatus.printing).length;
+    final awaitingAckCount = queue
+        .where((j) => j.status == PrintJobStatus.printed_awaiting_ack)
+        .length;
+    final lastJobTime = queue.isEmpty
+        ? null
+        : queue
+            .map((j) => j.createdAt)
+            .whereType<DateTime>()
+            .fold<DateTime?>(null, (prev, dt) {
+            if (prev == null) return dt;
+            return dt.isAfter(prev) ? dt : prev;
+          });
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Woosoo Relay Device'),
         actions: [
-          IconButton(icon: const Icon(Icons.history), onPressed: () => context.push('/orders')),
-          IconButton(icon: const Icon(Icons.analytics), onPressed: () => context.push('/metrics')),
-          IconButton(icon: const Icon(Icons.list), onPressed: () => context.push('/queue')),
-          IconButton(icon: const Icon(Icons.settings), onPressed: () => context.push('/settings')),
+          IconButton(
+              icon: const Icon(Icons.history),
+              onPressed: () => context.push('/orders')),
+          IconButton(
+              icon: const Icon(Icons.analytics),
+              onPressed: () => context.push('/metrics')),
+          IconButton(
+              icon: const Icon(Icons.list),
+              onPressed: () => context.push('/queue')),
+          IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () => context.push('/settings')),
         ],
       ),
       body: RefreshIndicator(
@@ -48,18 +64,22 @@ class StatusScreen extends ConsumerWidget {
               ]),
               const SizedBox(height: 12),
               _card('Connection', [
-                _kvWithIndicator('Network', st.networkConnected, onlineText: 'Online', offlineText: 'Offline'),
-                _kvWithIndicator('WebSocket', st.wsConnected, onlineText: 'Connected', offlineText: 'Disconnected'),
+                _kvWithIndicator('Network', st.networkConnected,
+                    onlineText: 'Online', offlineText: 'Offline'),
+                _kvWithIndicator('WebSocket', st.wsConnected,
+                    onlineText: 'Connected', offlineText: 'Disconnected'),
               ]),
               const SizedBox(height: 12),
               _card('Printer', [
-                _kvWithIndicator('Connected', st.printer.connected, onlineText: 'Ready', offlineText: 'Not connected'),
+                _kvWithIndicator('Connected', st.printer.connected,
+                    onlineText: 'Ready', offlineText: 'Not connected'),
                 _kv('Name', st.config.printerName ?? '—'),
                 _kv('Address', st.config.printerAddress ?? '—'),
                 if ((st.printer.error ?? '').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
-                    child: Text('Error: ${st.printer.error}', style: const TextStyle(color: Colors.red)),
+                    child: Text('Error: ${st.printer.error}',
+                        style: const TextStyle(color: Colors.red)),
                   ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -100,7 +120,9 @@ class StatusScreen extends ConsumerWidget {
               ]),
               if ((st.lastError ?? '').isNotEmpty) ...[
                 const SizedBox(height: 12),
-                _card('Last Error', [Text(st.lastError!, style: const TextStyle(color: Colors.red))]),
+                _card('Last Error', [
+                  Text(st.lastError!, style: const TextStyle(color: Colors.red))
+                ]),
               ],
             ],
           ),
@@ -113,17 +135,26 @@ class StatusScreen extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
-            SizedBox(width: 120, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600))),
+            SizedBox(
+                width: 120,
+                child: Text(k,
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
             Expanded(child: Text(v)),
           ],
         ),
       );
 
-  Widget _kvWithIndicator(String k, bool connected, {String onlineText = 'Connected', String offlineText = 'Disconnected'}) => Padding(
+  Widget _kvWithIndicator(String k, bool connected,
+          {String onlineText = 'Connected',
+          String offlineText = 'Disconnected'}) =>
+      Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
-            SizedBox(width: 120, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600))),
+            SizedBox(
+                width: 120,
+                child: Text(k,
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
             Icon(
               connected ? Icons.check_circle : Icons.cancel,
               color: connected ? Colors.green : Colors.red,
@@ -138,7 +169,8 @@ class StatusScreen extends ConsumerWidget {
   Widget _card(String title, List<Widget> children) => Card(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             ...children,
@@ -153,21 +185,24 @@ class StatusScreen extends ConsumerWidget {
 
     if (address == null || address.isEmpty) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Select a printer in Settings first')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('Select a printer in Settings first')));
       }
       return;
     }
 
     await ctrl.connectPrinterByAddress(address, name: cfg.printerName);
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Printer connect attempted')));
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Printer connect attempted')));
     }
   }
 
   Future<void> _forcePoll(BuildContext context, AppController ctrl) async {
     await ctrl.forcePoll();
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Polling triggered')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Polling triggered')));
     }
   }
 
@@ -183,7 +218,9 @@ class StatusScreen extends ConsumerWidget {
     if (context.mounted) Navigator.of(context).pop();
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(result.message), backgroundColor: result.success ? Colors.green : Colors.red),
+        SnackBar(
+            content: Text(result.message),
+            backgroundColor: result.success ? Colors.green : Colors.red),
       );
     }
   }

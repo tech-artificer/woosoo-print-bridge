@@ -1,19 +1,33 @@
 import 'package:flutter/foundation.dart';
 
 class AppConstants {
-    static const String defaultApiBaseUrl = 'https://192.168.100.85:8000';
-    
-    // Build-time configuration via --dart-define
-    // Usage: flutter build apk --dart-define=REVERB_APP_KEY=your_key_here
-    static const String _reverbAppKey = String.fromEnvironment(
-      'REVERB_APP_KEY',
-      defaultValue: 'vhy4mrtlhdwa61lukcze', // Fallback for development only
-    );
-    
-    // Connect via nginx proxy with TLS termination (port 8000/reverb path)
-    // When system uses HTTPS, WebSocket must use WSS via nginx reverse proxy
-    static String get defaultWsUrl =>
-      'wss://192.168.100.85:8000/reverb/app/$_reverbAppKey?protocol=7&client=flutter&version=1.0';
+  static const String defaultApiBaseUrl = 'https://192.168.100.7:8443';
+
+  // Reverb app key — copied from woosoo-nexus REVERB_APP_KEY.
+  // Can be overridden at build time via --dart-define=REVERB_APP_KEY=<key>
+  // or changed at runtime in the Settings screen (stored in SharedPreferences).
+  static const String defaultReverbAppKey = String.fromEnvironment(
+    'REVERB_APP_KEY',
+    defaultValue: '2f8e4a7c9b3d6e1a5f0c8e2b7d4a9c6f',
+  );
+
+  /// Derive the WebSocket URL from an API base URL and Reverb app key.
+  /// Converts https:// → wss://, http:// → ws://, preserves host and port.
+  static String deriveWsUrl(String apiBaseUrl, {String? appKey}) {
+    final key = (appKey ?? '').isNotEmpty ? appKey! : defaultReverbAppKey;
+    try {
+      final uri = Uri.parse(apiBaseUrl);
+      final scheme = uri.scheme == 'https' ? 'wss' : 'ws';
+      final host = uri.host.isNotEmpty ? uri.host : '192.168.100.7';
+      final port = uri.hasPort ? ':${uri.port}' : '';
+      return '$scheme://$host$port/app/$key?protocol=7&client=flutter&version=1.0';
+    } catch (_) {
+      return defaultWsUrl;
+    }
+  }
+
+  static String get defaultWsUrl =>
+      deriveWsUrl(defaultApiBaseUrl, appKey: defaultReverbAppKey);
 
   static const Duration queueTick = Duration(seconds: 2);
   static const Duration pollingInterval = Duration(seconds: 30);

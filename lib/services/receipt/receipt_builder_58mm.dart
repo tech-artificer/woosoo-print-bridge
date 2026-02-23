@@ -1,5 +1,4 @@
 import '../../core/constants.dart';
-import '../../core/time.dart';
 
 class ReceiptBuilder58mm {
   final int width;
@@ -8,25 +7,35 @@ class ReceiptBuilder58mm {
   List<String> build(Map<String, dynamic> payload) {
     final lines = <String>[];
 
-    final printType = (payload['print_type'] ?? payload['printType'] ?? 'INITIAL').toString().toUpperCase();
+    final printType =
+        (payload['print_type'] ?? payload['printType'] ?? 'INITIAL')
+            .toString()
+            .toUpperCase();
     final refillNo = payload['refill_number'] ?? payload['refillNumber'];
     final tablename = (payload['tablename'] ?? '').toString();
-    final orderNumber = (payload['order_number'] ?? payload['orderNumber'] ?? '').toString();
+    final orderNumber =
+        (payload['order_number'] ?? payload['orderNumber'] ?? '').toString();
     final guestCount = payload['guest_count'] ?? payload['guestCount'];
     final createdAtRaw = payload['created_at'] ?? payload['createdAt'];
-    final createdAt = createdAtRaw is String ? DateTime.tryParse(createdAtRaw) : null;
+    final createdAt =
+        createdAtRaw is String ? DateTime.tryParse(createdAtRaw) : null;
 
     final items = (payload['items'] as List?) ?? const [];
 
     // Extract package (first item) separately
     final packageItem = items.isNotEmpty ? items.first : null;
-    final packageName = packageItem != null 
-        ? (Map<String, dynamic>.from(packageItem as Map)['name'] ?? 'Unknown Package').toString()
+    final packageName = packageItem != null
+        ? (Map<String, dynamic>.from(packageItem as Map)['name'] ??
+                'Unknown Package')
+            .toString()
         : 'Unknown Package';
 
     // Format date and time for same-line display
-    final dateStr = createdAt?.toLocal().toString().split(' ').first ?? DateTime.now().toLocal().toString().split(' ').first;
-    final timeStr = createdAt != null ? _formatTime12Hour(createdAt) : _formatTime12Hour(DateTime.now());
+    final dateStr = createdAt?.toLocal().toString().split(' ').first ??
+        DateTime.now().toLocal().toString().split(' ').first;
+    final timeStr = createdAt != null
+        ? _formatTime12Hour(createdAt)
+        : _formatTime12Hour(DateTime.now());
 
     // HEADER: DINE IN centered with === borders
     lines.add('');
@@ -35,9 +44,11 @@ class ReceiptBuilder58mm {
     lines.add('');
 
     // DATE AND TIME on same line with spacing
-    final dateTimeCount = dateStr.length + timeStr.length + 4; // 4 for spacing/padding
+    final dateTimeCount =
+        dateStr.length + timeStr.length + 4; // 4 for spacing/padding
     final spacesNeeded = width - dateTimeCount;
-    lines.add('$dateStr    ${' ' * (spacesNeeded > 0 ? spacesNeeded : 0)}$timeStr');
+    lines.add(
+        '$dateStr    ${' ' * (spacesNeeded > 0 ? spacesNeeded : 0)}$timeStr');
 
     lines.add(_equals());
 
@@ -52,7 +63,7 @@ class ReceiptBuilder58mm {
 
     // ITEMS: Start from index 1 (skip package at 0)
     final itemsToDisplay = items.length > 1 ? items.sublist(1) : <dynamic>[];
-    
+
     if (itemsToDisplay.isEmpty && items.isEmpty) {
       lines.add('(No items)');
     } else {
@@ -79,7 +90,7 @@ class ReceiptBuilder58mm {
     lines.add('');
     lines.add('');
     lines.add('');
-    
+
     return lines;
   }
 
@@ -100,9 +111,9 @@ class ReceiptBuilder58mm {
   }
 
   String _hr() => '-' * width;
-  
+
   String _equals() => '=' * width;
-  
+
   String _stars() => '*' * width;
 
   String _lr(String left, String right) {

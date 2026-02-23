@@ -116,6 +116,27 @@ class ApiService {
     }, op: 'markPrintEventFailed');
   }
 
+  /// Register a new device using a one-time registration code.
+  /// Returns the full response body on success (contains `token` and `device`),
+  /// or a map with `_error: true` on failure.
+  Future<Map<String, dynamic>?> registerDevice(String apiBaseUrl, {required String name, required String code, String? appVersion}) async {
+    return _retry(() async {
+      final body = jsonEncode({
+        'name': name,
+        'code': code,
+        if (appVersion != null) 'app_version': appVersion,
+      });
+      final res = await _client
+          .post(_u(apiBaseUrl, '/api/devices/register'), headers: _headers(), body: body)
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode == 201) return jsonDecode(res.body) as Map<String, dynamic>;
+      try {
+        return {'_error': true, 'body': jsonDecode(res.body), 'status': res.statusCode};
+      } catch (_) {}
+      return {'_error': true, 'status': res.statusCode};
+    }, op: 'registerDevice');
+  }
+
   Future<void> sendHeartbeat(DeviceConfig cfg, {required Map<String, dynamic> payload}) async {
     final token = cfg.authToken ?? '';
     if (token.isEmpty) return;

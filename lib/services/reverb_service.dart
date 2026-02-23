@@ -19,7 +19,7 @@ class ReverbService {
   int _attempts = 0;
   Timer? _reconnectTimer;
   String? _wsUrl;
-  
+
   // Exponential backoff cap: max 60 seconds between reconnect attempts
   static const _reconnectBackoff = [1, 2, 4, 8, 16, 30, 60];
 
@@ -37,30 +37,40 @@ class ReverbService {
     await disconnect();
     try {
       log.i('WS connecting: $wsUrl');
-      
+
       // Create HTTP client that accepts self-signed certificates (development only)
       final httpClient = HttpClient()
-        ..badCertificateCallback = (X509Certificate cert, String host, int port) {
+        ..badCertificateCallback =
+            (X509Certificate cert, String host, int port) {
           log.w('WS accepting self-signed certificate from $host:$port');
           return true; // Accept all certificates (INSECURE - development only)
         };
-      
+
       final uri = Uri.parse(wsUrl);
       final socket = await WebSocket.connect(
         wsUrl,
         customClient: httpClient,
       );
-      
+
       _ch = IOWebSocketChannel(socket);
       _connected = true;
       _attempts = 0;
 
-      _ch!.sink.add(jsonEncode({'event': 'pusher:subscribe', 'data': {'channel': 'admin.print'}}));
+      _ch!.sink.add(jsonEncode({
+        'event': 'pusher:subscribe',
+        'data': {'channel': 'admin.print'}
+      }));
 
       _sub = _ch!.stream.listen((msg) async => _handleMessage(msg),
-          onError: (e, st) { log.e('WS error', e, st); _connected = false; _scheduleReconnect(); },
-          onDone: () { log.w('WS disconnected'); _connected = false; _scheduleReconnect(); },
-          cancelOnError: true);
+          onError: (e, st) {
+        log.e('WS error', e, st);
+        _connected = false;
+        _scheduleReconnect();
+      }, onDone: () {
+        log.w('WS disconnected');
+        _connected = false;
+        _scheduleReconnect();
+      }, cancelOnError: true);
 
       log.i('WS connected & subscribed');
     } catch (e, st) {
@@ -73,34 +83,58 @@ class ReverbService {
   Future<void> _handleMessage(dynamic raw) async {
     if (raw == null) return;
     Map<String, dynamic>? msg;
-    try { msg = jsonDecode(raw as String) as Map<String, dynamic>; } catch (_) { return; }
+    try {
+      msg = jsonDecode(raw as String) as Map<String, dynamic>;
+    } catch (_) {
+      return;
+    }
 
     final event = (msg['event'] ?? '').toString();
-    if (event.startsWith('pusher:') || event.startsWith('pusher_internal:')) return;
+    if (event.startsWith('pusher:') || event.startsWith('pusher_internal:')) {
+      return;
+    }
 
     final normalized = event.startsWith('.') ? event.substring(1) : event;
     if (normalized != 'order.printed') return;
 
     dynamic data = msg['data'];
-    if (data is String) { try { data = jsonDecode(data); } catch (_) { return; } }
-    if (data is Map) await onPrintEvent(Map<String, dynamic>.from(data as Map));
+    if (data is String) {
+      try {
+        data = jsonDecode(data);
+      } catch (_) {
+        return;
+      }
+    }
+    if (data is Map) await onPrintEvent(Map<String, dynamic>.from(data));
   }
 
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
-    if (_attempts >= 10) { log.w('WS max reconnect attempts reached; polling continues'); return; }
+    if (_attempts >= 10) {
+      log.w('WS max reconnect attempts reached; polling continues');
+      return;
+    }
     _attempts++;
-    final backoffIndex = _attempts <= _reconnectBackoff.length ? _attempts - 1 : _reconnectBackoff.length - 1;
+    final backoffIndex = _attempts <= _reconnectBackoff.length
+        ? _attempts - 1
+        : _reconnectBackoff.length - 1;
     final delaySeconds = _reconnectBackoff[backoffIndex];
     log.i('WS reconnect in ${delaySeconds}s (attempt $_attempts/10)');
-    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async { if (!_connected) await _connectInternal(); });
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
+      if (!_connected) await _connectInternal();
+    });
   }
 
   Future<void> disconnect() async {
-    _reconnectTimer?.cancel(); _reconnectTimer = null;
-    try { await _sub?.cancel(); } catch (_) {}
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    try {
+      await _sub?.cancel();
+    } catch (_) {}
     _sub = null;
-    try { await _ch?.sink.close(); } catch (_) {}
+    try {
+      await _ch?.sink.close();
+    } catch (_) {}
     _ch = null;
     _connected = false;
   }
