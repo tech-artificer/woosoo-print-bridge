@@ -10,12 +10,14 @@ class PollingService {
   final LoggerService log;
   final ApiService api;
   final PollResultHandler onEvents;
+  // Called with '' on a successful poll tick, non-empty error string on failure.
+  final void Function(String)? onPollError;
 
   Timer? _timer;
   DateTime? _since;
   int? _sessionId;
 
-  PollingService({required this.log, required this.api, required this.onEvents});
+  PollingService({required this.log, required this.api, required this.onEvents, this.onPollError});
 
   Future<DateTime?> _loadWatermark() async {
     final sp = await SharedPreferences.getInstance();
@@ -54,7 +56,7 @@ class PollingService {
     final sessionId = _sessionId;
     if (sessionId == null) return;
     try {
-      final list = await api.getUnprintedPrintEvents(cfg, sessionId: sessionId, since: _since, limit: 50);
+      final list = await api.getUnprintedPrintEvents(cfg, token: cfg.authToken ?? '', sessionId: sessionId, since: _since, limit: 50);
       if (list.isNotEmpty) {
         await onEvents(list);
         final maxCreatedAt = list
@@ -64,8 +66,10 @@ class PollingService {
         await _saveWatermark(maxCreatedAt);
       }
       // Keep _since unchanged if events.isEmpty
+      onPollError?.call(''); // clear any previous error on success
     } catch (e, st) {
       log.e('Polling tick failed', e, st);
+      onPollError?.call(e.toString());
     }
   }
 }

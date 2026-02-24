@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
@@ -74,20 +75,23 @@ class ApiService {
     }, op: 'getLatestSession');
   }
 
-  Future<List<Map<String, dynamic>>> getUnprintedPrintEvents(DeviceConfig cfg, {required int sessionId, DateTime? since, int limit = 50}) async {
-    // No longer requires auth token - guest endpoint
+  Future<List<Map<String, dynamic>>> getUnprintedPrintEvents(DeviceConfig cfg, {required String token, required int sessionId, DateTime? since, int limit = 50}) async {
     return _retry(() async {
       final q = {'session_id': '$sessionId', 'limit': '$limit', if (since != null) 'since': since.toUtc().toIso8601String()};
-      final res = await _client.get(_u(cfg.apiBaseUrl, '/api/printer/unprinted-events', q), headers: _headers()).timeout(const Duration(seconds: 12));
-      if (res.statusCode != 200) return [];
+      final url = _u(cfg.apiBaseUrl, '/api/printer/unprinted-events', q);
+      final res = await _client.get(url, headers: _headers(token: token)).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        final snippet = res.body.substring(0, min(200, res.body.length));
+        log.w('[API ${res.statusCode}] ${url.path}: $snippet');
+        throw Exception('HTTP ${res.statusCode}: $snippet');
+      }
       final j = jsonDecode(res.body) as Map<String, dynamic>;
       final list = (j['print_events'] as List?) ?? (j['events'] as List?) ?? const [];
       return list.map((e) => Map<String, dynamic>.from(e as Map)).toList();
     }, op: 'getUnprintedPrintEvents');
   }
 
-  Future<bool> markPrintEventPrinted(DeviceConfig cfg, int printEventId, {required DateTime printedAt, required String printerId, String? printerName, String? bluetoothAddress, String? appVersion}) async {
-    // No longer requires auth token - guest endpoint
+  Future<bool> markPrintEventPrinted(DeviceConfig cfg, int printEventId, {required String token, required DateTime printedAt, required String printerId, String? printerName, String? bluetoothAddress, String? appVersion}) async {
     return _retry(() async {
       final body = jsonEncode({
         'printed_at': printedAt.toUtc().toIso8601String(),
@@ -96,13 +100,16 @@ class ApiService {
         'bluetooth_address': bluetoothAddress,
         'app_version': appVersion,
       });
-      final res = await _client.post(_u(cfg.apiBaseUrl, '/api/printer/print-events/$printEventId/ack'), headers: _headers(), body: body).timeout(const Duration(seconds: 12));
+      final url = _u(cfg.apiBaseUrl, '/api/printer/print-events/$printEventId/ack');
+      final res = await _client.post(url, headers: _headers(token: token), body: body).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        log.w('[API ${res.statusCode}] ${url.path}: ${res.body.substring(0, min(200, res.body.length))}');
+      }
       return res.statusCode == 200;
     }, op: 'markPrintEventPrinted');
   }
 
-  Future<bool> markPrintEventFailed(DeviceConfig cfg, int printEventId, {required DateTime failedAt, required String error, required int attemptCount, String? printerName, String? appVersion}) async {
-    // No longer requires auth token - guest endpoint
+  Future<bool> markPrintEventFailed(DeviceConfig cfg, int printEventId, {required String token, required DateTime failedAt, required String error, required int attemptCount, String? printerName, String? appVersion}) async {
     return _retry(() async {
       final body = jsonEncode({
         'failed_at': failedAt.toUtc().toIso8601String(),
@@ -111,7 +118,11 @@ class ApiService {
         'printer_name': printerName,
         'app_version': appVersion,
       });
-      final res = await _client.post(_u(cfg.apiBaseUrl, '/api/print-events/$printEventId/failed'), headers: _headers(), body: body).timeout(const Duration(seconds: 12));
+      final url = _u(cfg.apiBaseUrl, '/api/printer/print-events/$printEventId/failed');
+      final res = await _client.post(url, headers: _headers(token: token), body: body).timeout(const Duration(seconds: 12));
+      if (res.statusCode != 200) {
+        log.w('[API ${res.statusCode}] ${url.path}: ${res.body.substring(0, min(200, res.body.length))}');
+      }
       return res.statusCode == 200;
     }, op: 'markPrintEventFailed');
   }

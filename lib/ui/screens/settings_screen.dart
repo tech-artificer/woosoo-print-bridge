@@ -28,6 +28,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _regResult;
   bool _regSuccess = false;
 
+  String _maskSensitive(String? value, {int keepStart = 3, int keepEnd = 3}) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return '—';
+    if (raw.length <= (keepStart + keepEnd)) return '***';
+
+    final start = raw.substring(0, keepStart);
+    final end = raw.substring(raw.length - keepEnd);
+    return '$start***$end';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -124,8 +134,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               decoration: const InputDecoration(labelText: 'Printer ID (backend)'),
             ),
             const SizedBox(height: 8),
-            Text('Device ID: ${st.config.deviceId ?? '—'}', style: const TextStyle(fontSize: 12)),
-            Text('Auth token: ${st.config.authToken == null ? '—' : '(saved)'}', style: const TextStyle(fontSize: 12)),
+            Text(
+              'Device ID: ${_maskSensitive(st.config.deviceId, keepStart: 3, keepEnd: 3)}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            Text(
+              'Auth token: ${_maskSensitive(st.config.authToken, keepStart: 4, keepEnd: 4)}',
+              style: const TextStyle(fontSize: 12),
+            ),
           ]),
           const SizedBox(height: 12),
 

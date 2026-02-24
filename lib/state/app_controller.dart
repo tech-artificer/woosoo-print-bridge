@@ -161,8 +161,9 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> _ensureDeviceAuth() async {
     final cfg = state.config;
-    if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty)
+    if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty) {
       return;
+    }
 
     state = state.copyWith(authenticating: true);
     try {
@@ -232,6 +233,9 @@ class AppController extends StateNotifier<AppState> {
     _ws = ReverbService(
       log: log,
       onPrintEvent: (payload) async => enqueueFromPayload(payload),
+      onConnect: () => state = state.copyWith(wsConnected: true, lastWsError: ''),
+      onDisconnect: (reason) => state = state.copyWith(wsConnected: false, lastWsError: reason ?? ''),
+      onError: (msg) => state = state.copyWith(lastWsError: msg),
     );
     _ws!.connect(state.config.wsUrl);
   }
@@ -253,6 +257,7 @@ class AppController extends StateNotifier<AppState> {
     _polling = PollingService(
       log: log,
       api: ref.read(apiProvider),
+      onPollError: (msg) => state = state.copyWith(lastPollError: msg),
       onEvents: (events) async {
         log.i('Polling received ${events.length} events');
         for (final e in events) {
@@ -368,12 +373,15 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> enqueueFromPayload(Map<String, dynamic> payload) async {
     log.i('📥 Received print payload: $payload');
-    final peid = payload['print_event_id'] ?? payload['printEventId'];
-    final orderId = payload['order_id'] ?? payload['orderId'];
-    // Device_id MUST be in the payload; do not default to config.deviceId
+    // Normalize backend response shape: backend sends 'id' not 'print_event_id';
+    // 'order_id' is nested inside 'order'; 'device_id' and 'session_id' are absent
+    // from the response so we fall back to local config/state values.
+    final orderMap = payload['order'] as Map<String, dynamic>?;
+    final peid = payload['print_event_id'] ?? payload['printEventId'] ?? payload['id'];
+    final orderId = payload['order_id'] ?? payload['orderId'] ?? orderMap?['order_id'];
     final deviceId =
-        (payload['device_id'] ?? payload['deviceId'] ?? '').toString();
-    final sessionId = payload['session_id'] ?? payload['sessionId'];
+        (payload['device_id'] ?? payload['deviceId'] ?? state.config.deviceId ?? '').toString();
+    final sessionId = payload['session_id'] ?? payload['sessionId'] ?? state.sessionId;
 
     log.i(
         'Payload validation: print_event_id=$peid, order_id=$orderId, device_id=$deviceId, session_id=$sessionId');
@@ -518,9 +526,10 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> testPrint() async {
     final ok = await ref.read(printerServiceProvider).testPrint();
-    if (!ok)
+    if (!ok) {
       state = state.copyWith(
           lastError: 'Test print failed (printer not connected?)');
+    }
   }
 
   Future<void> retryJob(int printEventId) async {
@@ -670,6 +679,7 @@ class AppController extends StateNotifier<AppState> {
         final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
               state.config,
               next.printEventId,
+              token: state.config.authToken ?? '',
               printedAt: DateTime.now().toUtc(),
               printerId: state.config.printerId,
               printerName: state.config.printerName,
@@ -711,6 +721,7 @@ class AppController extends StateNotifier<AppState> {
       await ref.read(apiProvider).markPrintEventFailed(
             state.config,
             job.printEventId,
+            token: state.config.authToken ?? '',
             failedAt: DateTime.now().toUtc(),
             error: error,
             attemptCount: nextRetry,
@@ -796,6 +807,7 @@ class AppController extends StateNotifier<AppState> {
           final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
                 state.config,
                 job.printEventId,
+                token: state.config.authToken ?? '',
                 printedAt: job.printedAt ?? DateTime.now().toUtc(),
                 printerId: state.config.printerId,
                 printerName: state.config.printerName,
@@ -941,10 +953,12 @@ class AppController extends StateNotifier<AppState> {
     await sp.setString('reverbAppKey', cfg.reverbAppKey);
     if (cfg.deviceId != null) await sp.setString('deviceId', cfg.deviceId!);
     if (cfg.authToken != null) await sp.setString('authToken', cfg.authToken!);
-    if (cfg.printerName != null)
+    if (cfg.printerName != null) {
       await sp.setString('printerName', cfg.printerName!);
-    if (cfg.printerAddress != null)
+    }
+    if (cfg.printerAddress != null) {
       await sp.setString('printerAddress', cfg.printerAddress!);
+    }
     await sp.setString('printerId', cfg.printerId);
   }
 
