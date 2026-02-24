@@ -31,6 +31,10 @@ class AppState {
   final String? lastError;
   final bool wsConnected;
   final bool networkConnected;
+  // Per-service error reasons: empty string = no error, non-empty = last error message.
+  // Preserved across unrelated state updates (uses ?? this.field in copyWith).
+  final String? lastPollError;
+  final String? lastWsError;
 
   const AppState({
     required this.initialized,
@@ -42,6 +46,8 @@ class AppState {
     required this.lastError,
     required this.wsConnected,
     required this.networkConnected,
+    this.lastPollError,
+    this.lastWsError,
   });
 
   int get pendingCount => queue.where((j) => j.status == PrintJobStatus.pending).length;
@@ -58,6 +64,8 @@ class AppState {
     String? lastError,
     bool? wsConnected,
     bool? networkConnected,
+    String? lastPollError,
+    String? lastWsError,
   }) =>
       AppState(
         initialized: initialized ?? this.initialized,
@@ -69,5 +77,7 @@ class AppState {
         lastError: lastError,
         wsConnected: wsConnected ?? this.wsConnected,
         networkConnected: networkConnected ?? this.networkConnected,
+        lastPollError: lastPollError ?? this.lastPollError,
+        lastWsError: lastWsError ?? this.lastWsError,
       );
 }

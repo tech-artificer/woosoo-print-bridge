@@ -233,6 +233,9 @@ class AppController extends StateNotifier<AppState> {
     _ws = ReverbService(
       log: log,
       onPrintEvent: (payload) async => enqueueFromPayload(payload),
+      onConnect: () => state = state.copyWith(wsConnected: true, lastWsError: ''),
+      onDisconnect: (reason) => state = state.copyWith(wsConnected: false, lastWsError: reason ?? ''),
+      onError: (msg) => state = state.copyWith(lastWsError: msg),
     );
     _ws!.connect(state.config.wsUrl);
   }
@@ -254,6 +257,7 @@ class AppController extends StateNotifier<AppState> {
     _polling = PollingService(
       log: log,
       api: ref.read(apiProvider),
+      onPollError: (msg) => state = state.copyWith(lastPollError: msg),
       onEvents: (events) async {
         log.i('Polling received ${events.length} events');
         for (final e in events) {

@@ -66,8 +66,18 @@ class StatusScreen extends ConsumerWidget {
               _card('Connection', [
                 _kvWithIndicator('Network', st.networkConnected,
                     onlineText: 'Online', offlineText: 'Offline'),
+                if (!st.networkConnected && (st.lastPollError ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, bottom: 4),
+                    child: Text(st.lastPollError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ),
                 _kvWithIndicator('WebSocket', st.wsConnected,
                     onlineText: 'Connected', offlineText: 'Disconnected'),
+                if (!st.wsConnected && (st.lastWsError ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 16, bottom: 4),
+                    child: Text(st.lastWsError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                  ),
               ]),
               const SizedBox(height: 12),
               _card('Printer', [
