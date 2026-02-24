@@ -54,7 +54,7 @@ class PollingService {
     final sessionId = _sessionId;
     if (sessionId == null) return;
     try {
-      final list = await api.getUnprintedPrintEvents(cfg, sessionId: sessionId, since: _since, limit: 50);
+      final list = await api.getUnprintedPrintEvents(cfg, token: cfg.authToken ?? '', sessionId: sessionId, since: _since, limit: 50);
       if (list.isNotEmpty) {
         await onEvents(list);
         final maxCreatedAt = list

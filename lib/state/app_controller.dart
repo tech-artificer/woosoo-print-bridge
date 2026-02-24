@@ -161,8 +161,9 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> _ensureDeviceAuth() async {
     final cfg = state.config;
-    if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty)
+    if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty) {
       return;
+    }
 
     state = state.copyWith(authenticating: true);
     try {
@@ -518,9 +519,10 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> testPrint() async {
     final ok = await ref.read(printerServiceProvider).testPrint();
-    if (!ok)
+    if (!ok) {
       state = state.copyWith(
           lastError: 'Test print failed (printer not connected?)');
+    }
   }
 
   Future<void> retryJob(int printEventId) async {
@@ -670,6 +672,7 @@ class AppController extends StateNotifier<AppState> {
         final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
               state.config,
               next.printEventId,
+              token: state.config.authToken ?? '',
               printedAt: DateTime.now().toUtc(),
               printerId: state.config.printerId,
               printerName: state.config.printerName,
@@ -711,6 +714,7 @@ class AppController extends StateNotifier<AppState> {
       await ref.read(apiProvider).markPrintEventFailed(
             state.config,
             job.printEventId,
+            token: state.config.authToken ?? '',
             failedAt: DateTime.now().toUtc(),
             error: error,
             attemptCount: nextRetry,
@@ -796,6 +800,7 @@ class AppController extends StateNotifier<AppState> {
           final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
                 state.config,
                 job.printEventId,
+                token: state.config.authToken ?? '',
                 printedAt: job.printedAt ?? DateTime.now().toUtc(),
                 printerId: state.config.printerId,
                 printerName: state.config.printerName,
@@ -941,10 +946,12 @@ class AppController extends StateNotifier<AppState> {
     await sp.setString('reverbAppKey', cfg.reverbAppKey);
     if (cfg.deviceId != null) await sp.setString('deviceId', cfg.deviceId!);
     if (cfg.authToken != null) await sp.setString('authToken', cfg.authToken!);
-    if (cfg.printerName != null)
+    if (cfg.printerName != null) {
       await sp.setString('printerName', cfg.printerName!);
-    if (cfg.printerAddress != null)
+    }
+    if (cfg.printerAddress != null) {
       await sp.setString('printerAddress', cfg.printerAddress!);
+    }
     await sp.setString('printerId', cfg.printerId);
   }
 
