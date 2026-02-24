@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:woosoo_relay_device/services/reverb_service.dart';
-import 'package:woosoo_relay_device/services/printer/printer_service.dart';
 import 'package:woosoo_relay_device/state/app_controller.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:intl/intl.dart';
