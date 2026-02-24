@@ -369,12 +369,15 @@ class AppController extends StateNotifier<AppState> {
 
   Future<void> enqueueFromPayload(Map<String, dynamic> payload) async {
     log.i('📥 Received print payload: $payload');
-    final peid = payload['print_event_id'] ?? payload['printEventId'];
-    final orderId = payload['order_id'] ?? payload['orderId'];
-    // Device_id MUST be in the payload; do not default to config.deviceId
+    // Normalize backend response shape: backend sends 'id' not 'print_event_id';
+    // 'order_id' is nested inside 'order'; 'device_id' and 'session_id' are absent
+    // from the response so we fall back to local config/state values.
+    final orderMap = payload['order'] as Map<String, dynamic>?;
+    final peid = payload['print_event_id'] ?? payload['printEventId'] ?? payload['id'];
+    final orderId = payload['order_id'] ?? payload['orderId'] ?? orderMap?['order_id'];
     final deviceId =
-        (payload['device_id'] ?? payload['deviceId'] ?? '').toString();
-    final sessionId = payload['session_id'] ?? payload['sessionId'];
+        (payload['device_id'] ?? payload['deviceId'] ?? state.config.deviceId ?? '').toString();
+    final sessionId = payload['session_id'] ?? payload['sessionId'] ?? state.sessionId;
 
     log.i(
         'Payload validation: print_event_id=$peid, order_id=$orderId, device_id=$deviceId, session_id=$sessionId');
