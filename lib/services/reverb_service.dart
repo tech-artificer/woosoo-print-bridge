@@ -10,6 +10,9 @@ typedef PrintEventHandler = Future<void> Function(Map<String, dynamic> payload);
 class ReverbService {
   final LoggerService log;
   final PrintEventHandler onPrintEvent;
+  final void Function(String)? onError;
+  final void Function()? onConnect;
+  final void Function(String?)? onDisconnect;
 
   WebSocketChannel? _ch;
   StreamSubscription? _sub;
@@ -23,7 +26,13 @@ class ReverbService {
   // Exponential backoff cap: max 60 seconds between reconnect attempts
   static const _reconnectBackoff = [1, 2, 4, 8, 16, 30, 60];
 
-  ReverbService({required this.log, required this.onPrintEvent});
+  ReverbService({
+    required this.log,
+    required this.onPrintEvent,
+    this.onError,
+    this.onConnect,
+    this.onDisconnect,
+  });
 
   Future<void> connect(String wsUrl) async {
     _wsUrl = wsUrl;
@@ -46,7 +55,6 @@ class ReverbService {
           return true; // Accept all certificates (INSECURE - development only)
         };
 
-      final uri = Uri.parse(wsUrl);
       final socket = await WebSocket.connect(
         wsUrl,
         customClient: httpClient,
@@ -55,27 +63,29 @@ class ReverbService {
       _ch = IOWebSocketChannel(socket);
       _connected = true;
       _attempts = 0;
+      onConnect?.call();
 
-      _ch!.sink.add(jsonEncode({
-        'event': 'pusher:subscribe',
-        'data': {'channel': 'admin.print'}
-      }));
+      // Do NOT send pusher:subscribe here — wait for pusher:connection_established
+      // from the server before subscribing (Pusher protocol requirement).
 
       _sub = _ch!.stream.listen((msg) async => _handleMessage(msg),
           onError: (e, st) {
         log.e('WS error', e, st);
         _connected = false;
+        onDisconnect?.call(e.toString());
         _scheduleReconnect();
       }, onDone: () {
         log.w('WS disconnected');
         _connected = false;
+        onDisconnect?.call('WS disconnected');
         _scheduleReconnect();
       }, cancelOnError: true);
 
-      log.i('WS connected & subscribed');
+      log.i('WS connected — awaiting pusher:connection_established');
     } catch (e, st) {
       log.e('WS connect failed', e, st);
       _connected = false;
+      onError?.call(e.toString());
       _scheduleReconnect();
     }
   }
@@ -90,6 +100,29 @@ class ReverbService {
     }
 
     final event = (msg['event'] ?? '').toString();
+
+    // Handle Pusher protocol handshake and control events before filtering
+    if (event == 'pusher:connection_established') {
+      _ch!.sink.add(jsonEncode({
+        'event': 'pusher:subscribe',
+        'data': {'channel': 'admin.print'},
+      }));
+      log.i('[WS] Subscribed to admin.print');
+      return;
+    }
+
+    if (event == 'pusher:subscription_succeeded') {
+      log.i('[WS] Subscription confirmed for admin.print');
+      return;
+    }
+
+    if (event == 'pusher:error') {
+      final data = msg['data'];
+      log.e('[WS] Pusher error: $data');
+      onError?.call('Pusher error: $data');
+      return;
+    }
+
     if (event.startsWith('pusher:') || event.startsWith('pusher_internal:')) {
       return;
     }
