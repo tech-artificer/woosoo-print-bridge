@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
@@ -14,12 +15,16 @@ class ApiService {
   late final http.Client _client;
   
   ApiService(this.log) {
-    // Create HTTP client that accepts self-signed certificates (development only)
-    final httpClient = HttpClient()
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
-        log.w('Accepting self-signed certificate from $host:$port');
-        return true; // Accept all certificates (INSECURE - development only)
+    final httpClient = HttpClient();
+    if (kDebugMode) {
+      // Accept self-signed certificates in debug builds only.
+      // In release/profile builds the default certificate validation is enforced.
+      httpClient.badCertificateCallback =
+          (X509Certificate cert, String host, int port) {
+        log.w('Accepting self-signed certificate from $host:$port (debug only)');
+        return true;
       };
+    }
     _client = IOClient(httpClient);
   }
 

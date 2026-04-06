@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'logger_service.dart';
@@ -47,13 +48,16 @@ class ReverbService {
     try {
       log.i('WS connecting: $wsUrl');
 
-      // Create HTTP client that accepts self-signed certificates (development only)
-      final httpClient = HttpClient()
-        ..badCertificateCallback =
+      final httpClient = HttpClient();
+      if (kDebugMode) {
+        // Accept self-signed certificates in debug builds only.
+        // In release/profile builds the default certificate validation is enforced.
+        httpClient.badCertificateCallback =
             (X509Certificate cert, String host, int port) {
-          log.w('WS accepting self-signed certificate from $host:$port');
-          return true; // Accept all certificates (INSECURE - development only)
+          log.w('WS accepting self-signed certificate from $host:$port (debug only)');
+          return true;
         };
+      }
 
       final socket = await WebSocket.connect(
         wsUrl,

@@ -54,6 +54,8 @@ class AppController extends StateNotifier<AppState> {
 
   Timer? _queueTimer;
   Timer? _ackFlushTimer;
+  Timer? _wsStatusTimer;
+  Timer? _printerStatusTimer;
   // M3.5-1: Single shared lock for ALL job state mutations (prevents collision between _processQueue + flushPendingAcks)
   final _jobStateLock = Lock();
   static const List<int> _printerReconnectBackoffSeconds = [1, 2, 5, 10, 30];
@@ -273,7 +275,8 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void _startWsStatusMonitor() {
-    Timer.periodic(const Duration(seconds: 5), (_) {
+    _wsStatusTimer?.cancel();
+    _wsStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       final connected = _ws?.isConnected ?? false;
       if (state.wsConnected != connected) {
         state = state.copyWith(wsConnected: connected);
@@ -282,7 +285,8 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void _startPrinterStatusMonitor() {
-    Timer.periodic(const Duration(seconds: 5), (_) async {
+    _printerStatusTimer?.cancel();
+    _printerStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       // Skip check if printer address not configured
       if ((state.config.printerAddress ?? '').isEmpty) return;
 
@@ -1000,10 +1004,13 @@ class AppController extends StateNotifier<AppState> {
   void dispose() {
     _queueTimer?.cancel();
     _ackFlushTimer?.cancel();
+    _wsStatusTimer?.cancel();
+    _printerStatusTimer?.cancel();
     _polling?.stop();
     _hb?.stop();
     _ws?.disconnect();
     _connectivitySub?.cancel();
+    unawaited(ref.read(queueStoreProvider).close());
     log.dispose();
     super.dispose();
   }

@@ -16,6 +16,10 @@ class QueueStore {
     _db = await databaseFactoryIo.openDatabase('${dir.path}/$_dbName');
   }
 
+  Future<void> close() async {
+    await _db.close();
+  }
+
   Future<bool> exists(int printEventId) async {
     final v = await _store.record(printEventId).get(_db);
     return v != null;
