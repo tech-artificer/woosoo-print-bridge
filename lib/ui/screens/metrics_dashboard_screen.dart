@@ -15,16 +15,19 @@ class MetricsDashboardScreen extends ConsumerWidget {
     final pending = st.pendingCount;
     final printing = ctrl.printingCount;
     final awaitingAck = ctrl.awaitingAckCount;
-    final success = st.successCount;
-    final failed = st.failedCount;
-    final totalJobs = st.queue.length;
+    final success = st.historicalSuccessCount;
+    final failed = st.historicalFailedCount;
+    final totalJobs = st.historicalTotalJobs;
     final completed = success + failed;
-    final successRate = completed == 0 ? '—' : '${((success / completed) * 100).toStringAsFixed(1)}%';
+    final successRate = completed == 0
+        ? '—'
+        : '${((success / completed) * 100).toStringAsFixed(1)}%';
 
-    final reconnectTotal = ctrl.reconnectAttemptTotal;
-    final reconnectMax = ctrl.reconnectAttemptMax;
-    final lastReconnect = ctrl.lastReconnectAttempt;
-    final lastJobTime = ctrl.lastJobTime;
+    final reconnectTotal = st.historicalReconnectAttemptTotal;
+    final reconnectMax = st.historicalReconnectAttemptMax;
+    final lastReconnect = st.historicalLastReconnectAttempt;
+    final lastJobTime = st.historicalLastJobTime;
+    final trackingSince = st.metricsTrackingSince;
     final uptime = ctrl.uptime;
 
     final recent = ctrl.recentJobs(limit: 5);
@@ -47,41 +50,63 @@ class MetricsDashboardScreen extends ConsumerWidget {
                 _kv('Initialized', st.initialized ? 'Yes' : 'No'),
                 _kv('Device ID', st.config.deviceId ?? '—'),
                 _kv('Session', st.sessionId?.toString() ?? '—'),
-                _kvWithIndicator('Network', st.networkConnected, onlineText: 'Online', offlineText: 'Offline'),
-                _kvWithIndicator('WebSocket', st.wsConnected, onlineText: 'Connected', offlineText: 'Disconnected'),
+                _kvWithIndicator('Network', st.networkConnected,
+                    onlineText: 'Online', offlineText: 'Offline'),
+                _kvWithIndicator('WebSocket', st.wsConnected,
+                    onlineText: 'Connected', offlineText: 'Disconnected'),
               ]),
               const SizedBox(height: 12),
               _card('Printer Health', [
-                _kvWithIndicator('Printer', st.printer.connected, onlineText: 'Connected', offlineText: 'Disconnected'),
+                _kvWithIndicator('Printer', st.printer.connected,
+                    onlineText: 'Connected', offlineText: 'Disconnected'),
                 _kv('Name', st.config.printerName ?? '—'),
                 _kv('Address', st.config.printerAddress ?? '—'),
                 _kv('Last Error', printerError.isEmpty ? '—' : printerError),
               ]),
               const SizedBox(height: 12),
               _card('Print Reliability', [
-                _kv('Total Jobs', totalJobs.toString(), valueKey: const Key('metric_total_jobs')),
-                _kv('Pending', pending.toString(), valueKey: const Key('metric_pending')),
-                _kv('Printing', printing.toString(), valueKey: const Key('metric_printing')),
-                _kv('Awaiting ACK', awaitingAck.toString(), valueKey: const Key('metric_awaiting_ack')),
-                _kv('Success', success.toString(), valueKey: const Key('metric_success')),
-                _kv('Failed', failed.toString(), valueKey: const Key('metric_failed')),
-                _kv('Success Rate', successRate, valueKey: const Key('metric_success_rate')),
+                _kv('Total Jobs', totalJobs.toString(),
+                    valueKey: const Key('metric_total_jobs')),
+                _kv('Pending', pending.toString(),
+                    valueKey: const Key('metric_pending')),
+                _kv('Printing', printing.toString(),
+                    valueKey: const Key('metric_printing')),
+                _kv('Awaiting ACK', awaitingAck.toString(),
+                    valueKey: const Key('metric_awaiting_ack')),
+                _kv('Success', success.toString(),
+                    valueKey: const Key('metric_success')),
+                _kv('Failed', failed.toString(),
+                    valueKey: const Key('metric_failed')),
+                _kv('Success Rate', successRate,
+                    valueKey: const Key('metric_success_rate')),
               ]),
               const SizedBox(height: 12),
               _card('Reconnect Metrics', [
-                _kv('Reconnect Attempts (Total)', reconnectTotal.toString(), valueKey: const Key('metric_reconnect_total')),
-                _kv('Reconnect Attempts (Max)', reconnectMax.toString(), valueKey: const Key('metric_reconnect_max')),
-                _kv('Last Reconnect', _formatDate(lastReconnect), valueKey: const Key('metric_reconnect_last')),
+                _kv('Reconnect Attempts (Total)', reconnectTotal.toString(),
+                    valueKey: const Key('metric_reconnect_total')),
+                _kv('Reconnect Attempts (Max)', reconnectMax.toString(),
+                    valueKey: const Key('metric_reconnect_max')),
+                _kv('Last Reconnect', _formatDate(lastReconnect),
+                    valueKey: const Key('metric_reconnect_last')),
               ]),
               const SizedBox(height: 12),
               _card('Uptime & Activity', [
-                _kv('Uptime', _formatDuration(uptime), valueKey: const Key('metric_uptime')),
-                _kv('Last Job', _formatDate(lastJobTime), valueKey: const Key('metric_last_job')),
+                _kv('Uptime', _formatDuration(uptime),
+                    valueKey: const Key('metric_uptime')),
+                _kv('Last Job', _formatDate(lastJobTime),
+                    valueKey: const Key('metric_last_job')),
               ]),
               if (lastError.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 _card('Last Error', [
-                  Text(lastError, style: const TextStyle(color: Colors.red)),
+                  Text(
+                    lastError.length > 120
+                        ? '${lastError.substring(0, 120)}…'
+                        : lastError,
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 13),
+                  ),
                 ]),
               ],
               const SizedBox(height: 12),
@@ -98,16 +123,18 @@ class MetricsDashboardScreen extends ConsumerWidget {
                       final job = recent[index];
                       final status = _prettyStatus(job.status);
                       final time = _formatDate(job.printedAt ?? job.createdAt);
-                      final subtitle = job.lastError != null && job.lastError!.isNotEmpty
-                          ? '$status • $time • ${job.lastError}'
-                          : '$status • $time';
+                      final subtitle =
+                          job.lastError != null && job.lastError!.isNotEmpty
+                              ? '$status • $time • ${job.lastError}'
+                              : '$status • $time';
 
                       return ListTile(
                         contentPadding: EdgeInsets.zero,
-                        leading: Icon(_statusIcon(job.status), color: _statusColor(job.status)),
-                        title: Text('print_event_id=${job.printEventId}'),
+                        leading: Icon(_statusIcon(job.status),
+                            color: _statusColor(context, job.status)),
+                        title: Text('Job #${job.printEventId}'),
                         subtitle: Text(subtitle),
-                        trailing: Text('retry=${job.retryCount}'),
+                        trailing: Text('Retries: ${job.retryCount}'),
                       );
                     },
                   ),
@@ -123,21 +150,34 @@ class MetricsDashboardScreen extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
-            SizedBox(width: 160, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600))),
+            SizedBox(
+                width: 160,
+                child: Text(k,
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
             Expanded(child: Text(v, key: valueKey)),
           ],
         ),
       );
 
-  Widget _kvWithIndicator(String k, bool connected, {String onlineText = 'Connected', String offlineText = 'Disconnected'}) => Padding(
+  Widget _kvWithIndicator(String k, bool connected,
+          {String onlineText = 'Connected',
+          String offlineText = 'Disconnected'}) =>
+      Padding(
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
-            SizedBox(width: 160, child: Text(k, style: const TextStyle(fontWeight: FontWeight.w600))),
-            Icon(
-              connected ? Icons.check_circle : Icons.cancel,
-              color: connected ? Colors.green : Colors.red,
-              size: 20,
+            SizedBox(
+                width: 160,
+                child: Text(k,
+                    style: const TextStyle(fontWeight: FontWeight.w600))),
+            Builder(
+              builder: (ctx) => Icon(
+                connected ? Icons.check_circle : Icons.cancel,
+                color: connected
+                    ? Theme.of(ctx).colorScheme.tertiary
+                    : Theme.of(ctx).colorScheme.error,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 8),
             Text(connected ? onlineText : offlineText),
@@ -148,7 +188,8 @@ class MetricsDashboardScreen extends ConsumerWidget {
   Widget _card(String title, List<Widget> children) => Card(
         child: Padding(
           padding: const EdgeInsets.all(12),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             ...children,
@@ -195,20 +236,21 @@ class MetricsDashboardScreen extends ConsumerWidget {
     }
   }
 
-  Color _statusColor(PrintJobStatus status) {
+  Color _statusColor(BuildContext context, PrintJobStatus status) {
+    final cs = Theme.of(context).colorScheme;
     switch (status) {
       case PrintJobStatus.pending:
-        return Colors.orange;
+        return cs.secondary;
       case PrintJobStatus.printing:
-        return Colors.blue;
+        return cs.primary;
       case PrintJobStatus.printed_awaiting_ack:
-        return Colors.purple;
+        return cs.primaryContainer;
       case PrintJobStatus.success:
-        return Colors.green;
+        return cs.tertiary;
       case PrintJobStatus.failed:
-        return Colors.red;
+        return cs.error;
       case PrintJobStatus.cancelled:
-        return Colors.grey;
+        return cs.outline;
     }
   }
 }

@@ -16,15 +16,22 @@ class ApiService {
   
   ApiService(this.log) {
     final httpClient = HttpClient();
-    if (kDebugMode) {
-      // Accept self-signed certificates in debug builds only.
-      // In release/profile builds the default certificate validation is enforced.
-      httpClient.badCertificateCallback =
-          (X509Certificate cert, String host, int port) {
-        log.w('Accepting self-signed certificate from $host:$port (debug only)');
+    // Accept self-signed certificates from known local Pi hosts in all build modes.
+    // In debug mode: accept all (existing behaviour preserved for development).
+    // In release/profile mode: only accept certificates from trusted Pi endpoints.
+    // This is NOT a global bypass — external HTTPS is still fully validated.
+    httpClient.badCertificateCallback =
+        (X509Certificate cert, String host, int port) {
+      if (kDebugMode) {
+        log.w('Accepting self-signed certificate from $host:$port (debug mode)');
         return true;
-      };
-    }
+      }
+      final trusted = AppConstants.trustedLocalHosts.contains(host);
+      if (trusted) {
+        log.w('Accepting self-signed certificate from trusted Pi host: $host:$port');
+      }
+      return trusted;
+    };
     _client = IOClient(httpClient);
   }
 

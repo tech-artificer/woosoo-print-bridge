@@ -37,6 +37,14 @@ class AppConstants {
   static const int maxPrintAttempts = 3;
   static const int maxApiRetries = 3;
 
+  /// Hosts for which self-signed TLS certificates are accepted in release builds.
+  /// Restricted to known local Pi network endpoints only — NOT a global bypass.
+  static const Set<String> trustedLocalHosts = {
+    '192.168.100.7',
+    'woosoo.local',
+    'api.woosoo.local',
+  };
+
   static void debugLog(String message) {
     if (kDebugMode) {
       // ignore: avoid_print

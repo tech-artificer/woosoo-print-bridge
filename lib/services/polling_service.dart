@@ -39,6 +39,26 @@ class PollingService {
   Future<void> start(DeviceConfig cfg, {required int sessionId, Duration interval = const Duration(seconds: 30)}) async {
     _sessionId = sessionId;
     _timer?.cancel();
+
+    // Task 2.8: Stale watermark guard — clear watermark if offline > 1 hour.
+    // This ensures events missed during extended downtime are re-fetched.
+    final sp = await SharedPreferences.getInstance();
+    final lastPollRaw = sp.getString('last_poll_time');
+    if (lastPollRaw != null) {
+      try {
+        final elapsed = DateTime.now().difference(DateTime.parse(lastPollRaw));
+        if (elapsed > const Duration(hours: 1)) {
+          log.w('Polling watermark stale — offline ${elapsed.inMinutes}m. Clearing to fetch all unprinted events.');
+          await sp.remove('polling_watermark'); // correct key name (not 'poll_watermark')
+          await sp.remove('last_poll_time');
+        }
+      } catch (e) {
+        log.w('Could not parse last_poll_time: $lastPollRaw — clearing watermark as precaution.');
+        await sp.remove('polling_watermark');
+        await sp.remove('last_poll_time');
+      }
+    }
+
     _timer = Timer.periodic(interval, (_) => _tick(cfg));
     _since = await _loadWatermark();
     log.i('Polling watermark loaded: $_since');
@@ -65,6 +85,9 @@ class PollingService {
         _since = maxCreatedAt;
         await _saveWatermark(maxCreatedAt);
       }
+      // Task 2.8: Record last successful poll time for stale watermark detection.
+      final sp = await SharedPreferences.getInstance();
+      await sp.setString('last_poll_time', DateTime.now().toUtc().toIso8601String());
       // Keep _since unchanged if events.isEmpty
       onPollError?.call(''); // clear any previous error on success
     } catch (e, st) {

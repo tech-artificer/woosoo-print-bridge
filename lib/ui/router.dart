@@ -6,6 +6,7 @@ import 'screens/settings_screen.dart';
 import 'screens/metrics_dashboard_screen.dart';
 import 'screens/logs_screen.dart';
 import 'screens/orders_history_screen.dart';
+import 'screens/dead_letter_screen.dart';
 
 final router = GoRouter(
   routes: [
@@ -16,5 +17,6 @@ final router = GoRouter(
     GoRoute(path: '/settings', builder: (_, __) => const SettingsScreen()),
     GoRoute(path: '/logs', builder: (_, __) => const LogsScreen()),
     GoRoute(path: '/orders', builder: (_, __) => const OrdersHistoryScreen()),
+    GoRoute(path: '/dead-letter', builder: (_, __) => const DeadLetterScreen()),
   ],
 );
