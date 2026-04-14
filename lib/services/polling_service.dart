@@ -79,11 +79,20 @@ class PollingService {
       final list = await api.getUnprintedPrintEvents(cfg, token: cfg.authToken ?? '', sessionId: sessionId, since: _since, limit: 50);
       if (list.isNotEmpty) {
         await onEvents(list);
-        final maxCreatedAt = list
+        
+        // Filter events with valid created_at timestamps to prevent crash on null
+        final validTimestamps = list
+            .where((e) => e['created_at'] != null && e['created_at'] is String)
             .map((e) => DateTime.parse(e['created_at'] as String))
-            .reduce((a, b) => a.isAfter(b) ? a : b);
-        _since = maxCreatedAt;
-        await _saveWatermark(maxCreatedAt);
+            .toList();
+        
+        // Only update watermark if we have valid timestamps
+        if (validTimestamps.isNotEmpty) {
+          final maxCreatedAt = validTimestamps.reduce((a, b) => a.isAfter(b) ? a : b);
+          _since = maxCreatedAt;
+          await _saveWatermark(maxCreatedAt);
+        }
+        // If all events have null created_at, keep previous _since to prevent re-fetch loop
       }
       // Task 2.8: Record last successful poll time for stale watermark detection.
       final sp = await SharedPreferences.getInstance();

@@ -544,8 +544,7 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
 
-    // C4: Device_id filtering - TEMPORARILY DISABLED for emergency printing
-    // TODO: Re-enable after device lookup is working
+    // C4: Device_id filtering to reject cross-device events.
     final myDeviceId = state.config.deviceId ?? '';
     if (myDeviceId.isNotEmpty &&
         deviceId.isNotEmpty &&
