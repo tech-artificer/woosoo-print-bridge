@@ -59,7 +59,7 @@ class ReverbService {
           log.w('WS accepting self-signed certificate from $host:$port (debug mode)');
           return true;
         }
-        // Import is transitively available via dart:io — AppConstants from constants.dart
+        // Outside debug mode, only allow self-signed certificates for trusted local hosts.
         final trusted = AppConstants.trustedLocalHosts.contains(host);
         if (trusted) {
           log.w('WS accepting self-signed certificate from trusted Pi host: $host:$port');
