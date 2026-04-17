@@ -22,13 +22,17 @@ PrintJob _makeJob(int id, {PrintJobStatus status = PrintJobStatus.pending, int r
 
 void main() {
   late QueueStore store;
+  late Database db;
 
   setUp(() async {
-    final db = await databaseFactoryMemory.openDatabase('test_${ DateTime.now().microsecondsSinceEpoch}.db');
+    db = await databaseFactoryMemory.openDatabase('test_${DateTime.now().microsecondsSinceEpoch}.db');
     store = QueueStore();
     store.initForTesting(db);
   });
 
+  tearDown(() async {
+    await db.close();
+  });
   group('QueueStore — insert and read', () {
     test('insert adds item to store', () async {
       final job = _makeJob(1);
