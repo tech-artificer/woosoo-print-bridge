@@ -254,11 +254,27 @@ class StatusScreen extends ConsumerWidget {
 }
 
 /// Warning banner shown on Status screen when dead-letter queue has > 3 items.
-class _DeadLetterWarning extends ConsumerWidget {
+class _DeadLetterWarning extends ConsumerStatefulWidget {
+  const _DeadLetterWarning();
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_DeadLetterWarning> createState() => _DeadLetterWarningState();
+}
+
+class _DeadLetterWarningState extends ConsumerState<_DeadLetterWarning> {
+  late final Future<List<Map<String, dynamic>>> _deadLetterJobsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _deadLetterJobsFuture =
+        ref.read(appControllerProvider.notifier).getDeadLetterJobs();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: ref.read(appControllerProvider.notifier).getDeadLetterJobs(),
+      future: _deadLetterJobsFuture,
       builder: (context, snap) {
         final count = snap.data?.length ?? 0;
         if (count <= 3) return const SizedBox.shrink();
