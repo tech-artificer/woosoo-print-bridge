@@ -7,11 +7,6 @@ class ReceiptBuilder58mm {
   List<String> build(Map<String, dynamic> payload) {
     final lines = <String>[];
 
-    final printType =
-        (payload['print_type'] ?? payload['printType'] ?? 'INITIAL')
-            .toString()
-            .toUpperCase();
-    final refillNo = payload['refill_number'] ?? payload['refillNumber'];
     final tablename = (payload['tablename'] ?? '').toString();
     final orderNumber =
         (payload['order_number'] ?? payload['orderNumber'] ?? '').toString();
@@ -115,24 +110,6 @@ class ReceiptBuilder58mm {
   String _equals() => '=' * width;
 
   String _stars() => '*' * width;
-
-  String _lr(String left, String right) {
-    final l = left.trim();
-    final r = right.trim();
-    if (l.length + r.length + 1 >= width) return '$l: $r';
-    final spaces = width - l.length - r.length;
-    return l + (' ' * spaces) + r;
-  }
-
-  List<String> _wrapItem(String name, String qty) {
-    final suffix = 'x$qty';
-    final maxName = width - suffix.length - 1;
-    final chunks = _wrap(name, maxName);
-    return [
-      '${chunks.first.padRight(maxName)} $suffix',
-      ...chunks.skip(1),
-    ];
-  }
 
   List<String> _wrapIndented(String s) {
     const indent = '  ';

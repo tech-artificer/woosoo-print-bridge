@@ -150,10 +150,10 @@ class _OrdersHistoryScreenState extends ConsumerState<OrdersHistoryScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _summaryItem('Total', filteredJobs.length, Colors.blue),
-                _summaryItem('Success', filteredJobs.where((j) => j.status == PrintJobStatus.success).length, Colors.green),
-                _summaryItem('Failed', filteredJobs.where((j) => j.status == PrintJobStatus.failed).length, Colors.red),
-                _summaryItem('Pending', filteredJobs.where((j) => j.status == PrintJobStatus.pending || j.status == PrintJobStatus.printing).length, Colors.orange),
+                _summaryItem('Total', filteredJobs.length, Theme.of(context).colorScheme.primary),
+                _summaryItem('Success', filteredJobs.where((j) => j.status == PrintJobStatus.success).length, Theme.of(context).colorScheme.tertiary),
+                _summaryItem('Failed', filteredJobs.where((j) => j.status == PrintJobStatus.failed).length, Theme.of(context).colorScheme.error),
+                _summaryItem('Pending', filteredJobs.where((j) => j.status == PrintJobStatus.pending || j.status == PrintJobStatus.printing).length, Theme.of(context).colorScheme.secondary),
               ],
             ),
           ),
@@ -168,7 +168,7 @@ class _OrdersHistoryScreenState extends ConsumerState<OrdersHistoryScreen> {
       label: Text(label),
       selected: isSelected,
       onSelected: (selected) => setState(() => _filterStatus = value),
-      selectedColor: Colors.blue.shade100,
+      selectedColor: Theme.of(context).colorScheme.primary.withAlpha(40),
     );
   }
 
@@ -216,7 +216,7 @@ class _OrdersHistoryScreenState extends ConsumerState<OrdersHistoryScreen> {
       } catch (e) {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Reprint failed: $e'), backgroundColor: Colors.red),
+            SnackBar(content: Text('Reprint failed: $e'), backgroundColor: Theme.of(context).colorScheme.error),
           );
         }
       }
@@ -234,7 +234,7 @@ class _OrderRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final tableName = (job.payload['tablename'] ?? job.payload['table_name'] ?? '—').toString();
     final statusIcon = _getStatusIcon(job.status);
-    final statusColor = _getStatusColor(job.status);
+    final statusColor = _getStatusColor(context, job.status);
     final time = _formatTime(job.createdAt);
 
     return Container(
@@ -277,7 +277,7 @@ class _OrderRow extends StatelessWidget {
                 flex: 2,
                 child: Text(
                   time,
-                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                  style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.outline),
                 ),
               ),
               Expanded(
@@ -312,18 +312,19 @@ class _OrderRow extends StatelessWidget {
     }
   }
 
-  Color _getStatusColor(PrintJobStatus status) {
+  Color _getStatusColor(BuildContext context, PrintJobStatus status) {
+    final cs = Theme.of(context).colorScheme;
     switch (status) {
       case PrintJobStatus.success:
-        return Colors.green;
+        return cs.tertiary;
       case PrintJobStatus.failed:
       case PrintJobStatus.cancelled:
-        return Colors.red;
+        return cs.error;
       case PrintJobStatus.printing:
       case PrintJobStatus.printed_awaiting_ack:
-        return Colors.blue;
+        return cs.primary;
       case PrintJobStatus.pending:
-        return Colors.orange;
+        return cs.secondary;
     }
   }
 
@@ -359,7 +360,7 @@ class _OrderRow extends StatelessWidget {
               if (job.retryCount > 0) _detailRow('Retry Count', job.retryCount.toString()),
               if (job.lastError != null) ...[
                 const SizedBox(height: 8),
-                const Text('Error:', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                const Text('Error:', style: TextStyle(fontWeight: FontWeight.bold)),
                 Text(job.lastError!, style: const TextStyle(fontSize: 12)),
               ],
             ],

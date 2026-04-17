@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../core/constants.dart';
 import 'logger_service.dart';
 
 typedef PrintEventHandler = Future<void> Function(Map<String, dynamic> payload);
@@ -47,13 +49,23 @@ class ReverbService {
     try {
       log.i('WS connecting: $wsUrl');
 
-      // Create HTTP client that accepts self-signed certificates (development only)
-      final httpClient = HttpClient()
-        ..badCertificateCallback =
-            (X509Certificate cert, String host, int port) {
-          log.w('WS accepting self-signed certificate from $host:$port');
-          return true; // Accept all certificates (INSECURE - development only)
-        };
+      final httpClient = HttpClient();
+      // Accept self-signed certificates from known local Pi hosts in all build modes.
+      // In debug mode: accept all. In release/profile mode: only trusted Pi endpoints.
+      // This mirrors the pattern in ApiService and is NOT a global bypass.
+      httpClient.badCertificateCallback =
+          (X509Certificate cert, String host, int port) {
+        if (kDebugMode) {
+          log.w('WS accepting self-signed certificate from $host:$port (debug mode)');
+          return true;
+        }
+        // Outside debug mode, only allow self-signed certificates for trusted local hosts.
+        final trusted = AppConstants.trustedLocalHosts.contains(host);
+        if (trusted) {
+          log.w('WS accepting self-signed certificate from trusted Pi host: $host:$port');
+        }
+        return trusted;
+      };
 
       final socket = await WebSocket.connect(
         wsUrl,
@@ -85,7 +97,19 @@ class ReverbService {
     } catch (e, st) {
       log.e('WS connect failed', e, st);
       _connected = false;
-      onError?.call(e.toString());
+
+      final rawError = e.toString();
+      final lower = rawError.toLowerCase();
+      final isCertError = lower.contains('certificate') ||
+          lower.contains('cert_verify_failed') ||
+          lower.contains('handshakeexception') ||
+          lower.contains('tls');
+
+      final message = isCertError && !kDebugMode
+          ? 'TLS certificate validation failed for Reverb host. Install a trusted certificate on device and server before running release builds. Raw: $rawError'
+          : rawError;
+
+      onError?.call(message);
       _scheduleReconnect();
     }
   }

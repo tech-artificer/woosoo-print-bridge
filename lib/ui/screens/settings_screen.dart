@@ -97,20 +97,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               controller: _apiCtl,
               decoration: const InputDecoration(
                 labelText: 'API Base URL',
-                hintText: 'https://192.168.100.7:8443',
+                hintText: 'https://your-server:8443',
               ),
               autocorrect: false,
               keyboardType: TextInputType.url,
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: _appKeyCtl,
-              decoration: const InputDecoration(
-                labelText: 'Reverb App Key',
-                hintText: 'From woosoo-nexus REVERB_APP_KEY',
+            // Reverb App Key — auto-fetched from server; shown read-only for diagnostics
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.white12),
               ),
-              autocorrect: false,
-              textCapitalization: TextCapitalization.none,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Reverb App Key (auto-fetched from server)', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                const SizedBox(height: 2),
+                Text(
+                  _maskSensitive(_appKeyCtl.text, keepStart: 4, keepEnd: 4),
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+              ]),
             ),
             const SizedBox(height: 8),
             // Auto-derived WS URL — read-only preview
@@ -143,7 +152,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               style: const TextStyle(fontSize: 12),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
 
           // ── Device Registration ─────────────────────────────────────────
           _section('Device Registration', [
@@ -152,16 +163,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  color: Colors.green.shade900,
+                  color: Theme.of(context).colorScheme.tertiary.withAlpha(40),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Row(children: [
-                  const Icon(Icons.check_circle, color: Colors.greenAccent, size: 16),
+                  Icon(Icons.check_circle, color: Theme.of(context).colorScheme.tertiary, size: 16),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
                       'Registered — ID: ${st.config.deviceId}',
-                      style: const TextStyle(color: Colors.greenAccent, fontSize: 12),
+                      style: TextStyle(color: Theme.of(context).colorScheme.tertiary, fontSize: 12),
                     ),
                   ),
                 ]),
@@ -189,13 +200,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  color: _regSuccess ? Colors.green.shade900 : Colors.red.shade900,
+                  color: _regSuccess ? Theme.of(context).colorScheme.tertiary.withAlpha(40) : Theme.of(context).colorScheme.error.withAlpha(40),
                   borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   _regResult!,
                   style: TextStyle(
-                    color: _regSuccess ? Colors.greenAccent : Colors.redAccent,
+                    color: _regSuccess ? Theme.of(context).colorScheme.tertiary : Theme.of(context).colorScheme.error,
                     fontSize: 12,
                   ),
                 ),
@@ -210,7 +221,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   : (isRegistered ? 'Re-register' : 'Register Device')),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
 
           // ── Bluetooth Printer ───────────────────────────────────────────
           _section('Bluetooth Printer (PB-58H)', [
@@ -228,7 +241,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               label: const Text('Disconnect'),
             ),
           ]),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
+          const Divider(height: 1),
+          const SizedBox(height: 8),
 
           // ── Maintenance ─────────────────────────────────────────────────
           _section('Maintenance', [
@@ -339,7 +354,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     messenger.showSnackBar(
       SnackBar(
         content: Text(result.message),
-        backgroundColor: result.success ? Colors.green : Colors.red,
+        backgroundColor: result.success ? Theme.of(context).colorScheme.tertiary : Theme.of(context).colorScheme.error,
       ),
     );
   }

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
@@ -14,12 +15,23 @@ class ApiService {
   late final http.Client _client;
   
   ApiService(this.log) {
-    // Create HTTP client that accepts self-signed certificates (development only)
-    final httpClient = HttpClient()
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
-        log.w('Accepting self-signed certificate from $host:$port');
-        return true; // Accept all certificates (INSECURE - development only)
-      };
+    final httpClient = HttpClient();
+    // Accept self-signed certificates from known local Pi hosts in all build modes.
+    // In debug mode: accept all (existing behaviour preserved for development).
+    // In release/profile mode: only accept certificates from trusted Pi endpoints.
+    // This is NOT a global bypass — external HTTPS is still fully validated.
+    httpClient.badCertificateCallback =
+        (X509Certificate cert, String host, int port) {
+      if (kDebugMode) {
+        log.w('Accepting self-signed certificate from $host:$port (debug mode)');
+        return true;
+      }
+      final trusted = AppConstants.trustedLocalHosts.contains(host);
+      if (trusted) {
+        log.w('Accepting self-signed certificate from trusted Pi host: $host:$port');
+      }
+      return trusted;
+    };
     _client = IOClient(httpClient);
   }
 
@@ -55,14 +67,25 @@ class ApiService {
     return Uri.parse('$b$p').replace(queryParameters: q);
   }
 
+  /// Returns the full response body (includes `device` + `broadcasting`).
+  /// Returns null on network failure or non-200 status.
   Future<Map<String, dynamic>?> lookupDeviceByIp(String apiBaseUrl) async {
     return _retry(() async {
       final res = await _client.get(_u(apiBaseUrl, '/api/device/lookup-by-ip'), headers: _headers()).timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return null;
       final j = jsonDecode(res.body) as Map<String, dynamic>;
-      if (j['found'] == true && j['device'] != null) return Map<String, dynamic>.from(j['device']);
-      return null;
+      return j;
     }, op: 'lookupDeviceByIp');
+  }
+
+  /// Fetch public config (broadcasting, app_version) from unauthenticated endpoint.
+  /// Used on cold-start when no cached config exists.
+  Future<Map<String, dynamic>?> fetchConfig(String apiBaseUrl) async {
+    return _retry(() async {
+      final res = await _client.get(_u(apiBaseUrl, '/api/config'), headers: _headers()).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }, op: 'fetchConfig');
   }
 
   Future<Map<String, dynamic>?> getLatestSession(DeviceConfig cfg) async {

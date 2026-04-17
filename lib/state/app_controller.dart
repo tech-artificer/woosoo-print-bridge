@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -44,6 +45,15 @@ final appControllerProvider =
 });
 
 class AppController extends StateNotifier<AppState> {
+  static const _metricTotalJobsKey = 'metrics.totalJobs';
+  static const _metricSuccessKey = 'metrics.success';
+  static const _metricFailedKey = 'metrics.failed';
+  static const _metricReconnectTotalKey = 'metrics.reconnectTotal';
+  static const _metricReconnectMaxKey = 'metrics.reconnectMax';
+  static const _metricLastReconnectKey = 'metrics.lastReconnectAt';
+  static const _metricLastJobKey = 'metrics.lastJobAt';
+  static const _metricTrackingSinceKey = 'metrics.trackingSince';
+
   final Ref ref;
   final LoggerService log;
   final ReceiptBuilder58mm receipt = ReceiptBuilder58mm();
@@ -54,23 +64,51 @@ class AppController extends StateNotifier<AppState> {
 
   Timer? _queueTimer;
   Timer? _ackFlushTimer;
+  Timer? _wsStatusTimer;
+  Timer? _printerStatusTimer;
   // M3.5-1: Single shared lock for ALL job state mutations (prevents collision between _processQueue + flushPendingAcks)
   final _jobStateLock = Lock();
   static const List<int> _printerReconnectBackoffSeconds = [1, 2, 5, 10, 30];
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   final DateTime _bootedAt = DateTime.now().toUtc();
 
+  static String _safePlatform() {
+    try {
+      return Platform.operatingSystem;
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  static String _safeOsVersion() {
+    try {
+      return Platform.operatingSystemVersion;
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
   AppController(this.ref, this.log, DeviceConfig initialCfg)
       : super(AppState(
           initialized: false,
           authenticating: false,
           config: initialCfg,
+          platform: _safePlatform(),
+          osVersion: _safeOsVersion(),
           printer: PrinterStatus.empty,
           queue: const [],
           sessionId: null,
           lastError: null,
           wsConnected: false,
           networkConnected: false,
+          historicalTotalJobs: 0,
+          historicalSuccessCount: 0,
+          historicalFailedCount: 0,
+          historicalReconnectAttemptTotal: 0,
+          historicalReconnectAttemptMax: 0,
+          historicalLastReconnectAttempt: null,
+          historicalLastJobTime: null,
+          metricsTrackingSince: null,
         ));
 
   Duration get uptime => DateTime.now().toUtc().difference(_bootedAt);
@@ -116,6 +154,7 @@ class AppController extends StateNotifier<AppState> {
     log.i('=== APP INITIALIZATION START ===');
     await ref.read(queueStoreProvider).init();
     await _loadConfig();
+    await _loadPersistedMetrics();
     log.i('Config loaded: apiBaseUrl=${state.config.apiBaseUrl}');
 
     final jobs = await ref.read(queueStoreProvider).all();
@@ -128,6 +167,12 @@ class AppController extends StateNotifier<AppState> {
       state = state.copyWith(lastError: 'Bluetooth permissions not granted');
     } else {
       log.i('Bluetooth permissions granted');
+    }
+
+    // Cold-start: fetch broadcasting config from server if Reverb key is empty
+    if (state.config.reverbAppKey.isEmpty && state.config.apiBaseUrl.isNotEmpty) {
+      log.i('STEP 0: Fetching broadcast config (cold-start, no cached key)');
+      await _fetchBroadcastConfig();
     }
 
     log.i('STEP 1: Device authentication');
@@ -159,6 +204,101 @@ class AppController extends StateNotifier<AppState> {
     log.i('=== APP INITIALIZATION COMPLETE ===');
   }
 
+  Future<void> _loadPersistedMetrics() async {
+    final sp = await SharedPreferences.getInstance();
+    final trackingSinceRaw = sp.getString(_metricTrackingSinceKey);
+    final trackingSince = trackingSinceRaw == null
+        ? DateTime.now().toUtc()
+        : DateTime.tryParse(trackingSinceRaw)?.toUtc() ??
+            DateTime.now().toUtc();
+
+    state = state.copyWith(
+      historicalTotalJobs: sp.getInt(_metricTotalJobsKey) ?? 0,
+      historicalSuccessCount: sp.getInt(_metricSuccessKey) ?? 0,
+      historicalFailedCount: sp.getInt(_metricFailedKey) ?? 0,
+      historicalReconnectAttemptTotal: sp.getInt(_metricReconnectTotalKey) ?? 0,
+      historicalReconnectAttemptMax: sp.getInt(_metricReconnectMaxKey) ?? 0,
+      historicalLastReconnectAttempt:
+          DateTime.tryParse(sp.getString(_metricLastReconnectKey) ?? '')
+              ?.toUtc(),
+      historicalLastJobTime:
+          DateTime.tryParse(sp.getString(_metricLastJobKey) ?? '')?.toUtc(),
+      metricsTrackingSince: trackingSince,
+    );
+
+    await sp.setString(
+        _metricTrackingSinceKey, trackingSince.toIso8601String());
+  }
+
+  Future<void> _savePersistedMetrics() async {
+    final sp = await SharedPreferences.getInstance();
+    await sp.setInt(_metricTotalJobsKey, state.historicalTotalJobs);
+    await sp.setInt(_metricSuccessKey, state.historicalSuccessCount);
+    await sp.setInt(_metricFailedKey, state.historicalFailedCount);
+    await sp.setInt(
+        _metricReconnectTotalKey, state.historicalReconnectAttemptTotal);
+    await sp.setInt(
+        _metricReconnectMaxKey, state.historicalReconnectAttemptMax);
+
+    final lastReconnect = state.historicalLastReconnectAttempt;
+    if (lastReconnect != null) {
+      await sp.setString(
+          _metricLastReconnectKey, lastReconnect.toIso8601String());
+    }
+
+    final lastJob = state.historicalLastJobTime;
+    if (lastJob != null) {
+      await sp.setString(_metricLastJobKey, lastJob.toIso8601String());
+    }
+
+    final trackingSince = state.metricsTrackingSince;
+    if (trackingSince != null) {
+      await sp.setString(
+          _metricTrackingSinceKey, trackingSince.toIso8601String());
+    }
+  }
+
+  Future<void> _recordJobSuccess(DateTime at) async {
+    state = state.copyWith(
+      historicalTotalJobs: state.historicalTotalJobs + 1,
+      historicalSuccessCount: state.historicalSuccessCount + 1,
+      historicalLastJobTime: at,
+    );
+    await _savePersistedMetrics();
+  }
+
+  Future<void> _recordJobFailure(DateTime at) async {
+    state = state.copyWith(
+      historicalTotalJobs: state.historicalTotalJobs + 1,
+      historicalFailedCount: state.historicalFailedCount + 1,
+      historicalLastJobTime: at,
+    );
+    await _savePersistedMetrics();
+  }
+
+  Future<void> _recordReconnectAttempt(int attemptNumber, DateTime at) async {
+    state = state.copyWith(
+      historicalReconnectAttemptTotal:
+          state.historicalReconnectAttemptTotal + 1,
+      historicalReconnectAttemptMax:
+          attemptNumber > state.historicalReconnectAttemptMax
+              ? attemptNumber
+              : state.historicalReconnectAttemptMax,
+      historicalLastReconnectAttempt: at,
+    );
+    await _savePersistedMetrics();
+  }
+
+  Future<void> _reopenFailedJobMetric() async {
+    state = state.copyWith(
+      historicalTotalJobs:
+          state.historicalTotalJobs > 0 ? state.historicalTotalJobs - 1 : 0,
+      historicalFailedCount:
+          state.historicalFailedCount > 0 ? state.historicalFailedCount - 1 : 0,
+    );
+    await _savePersistedMetrics();
+  }
+
   Future<void> _ensureDeviceAuth() async {
     final cfg = state.config;
     if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty) {
@@ -168,11 +308,24 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(authenticating: true);
     try {
       log.i('Attempting device lookup by IP from ${cfg.apiBaseUrl}');
-      final device =
+      final response =
           await ref.read(apiProvider).lookupDeviceByIp(cfg.apiBaseUrl);
-      if (device == null) {
+      if (response == null) {
         log.w(
             'Device lookup returned null - device not registered or API failed');
+        state = state.copyWith(
+            lastError: 'Device not registered (lookup-by-ip not found)');
+        return;
+      }
+
+      // Extract device info from the full response
+      final device = response['device'] as Map<String, dynamic>?;
+      final found = response['found'] == true;
+
+      if (!found || device == null) {
+        log.w('Device not found in lookup response');
+        // Still extract broadcasting config even when device not found
+        _applyBroadcastConfig(cfg, response['broadcasting']);
         state = state.copyWith(
             lastError: 'Device not registered (lookup-by-ip not found)');
         return;
@@ -183,13 +336,22 @@ class AppController extends StateNotifier<AppState> {
       log.i(
           'Device lookup successful: device_id=$deviceId, has_token=${authToken.isNotEmpty}');
 
+      // Extract Reverb app key from broadcasting config if available
+      String reverbAppKey = cfg.reverbAppKey;
+      final broadcasting = response['broadcasting'] as Map<String, dynamic>?;
+      if (broadcasting != null && (broadcasting['key'] ?? '').toString().isNotEmpty) {
+        reverbAppKey = broadcasting['key'].toString();
+        log.i('Received Reverb app key from server');
+      }
+
       final next = cfg.copyWith(
         deviceId: deviceId,
         authToken: authToken,
+        reverbAppKey: reverbAppKey,
         printerName: (device['printer_name'] ?? cfg.printerName)?.toString(),
         printerAddress:
             (device['bluetooth_address'] ?? cfg.printerAddress)?.toString(),
-      );
+      ).withDerivedWsUrl();
 
       await _saveConfig(next);
       state = state.copyWith(config: next);
@@ -200,6 +362,32 @@ class AppController extends StateNotifier<AppState> {
     } finally {
       state = state.copyWith(authenticating: false);
     }
+  }
+
+  /// Fetch broadcasting config from the unauthenticated /api/config endpoint.
+  /// Used on cold-start when no Reverb key is cached yet.
+  Future<void> _fetchBroadcastConfig() async {
+    try {
+      final res = await ref.read(apiProvider).fetchConfig(state.config.apiBaseUrl);
+      if (res == null) {
+        log.w('Cold-start config fetch returned null');
+        return;
+      }
+      _applyBroadcastConfig(state.config, res['broadcasting']);
+    } catch (e) {
+      log.w('Cold-start config fetch failed: $e');
+    }
+  }
+
+  /// Apply broadcasting config from server response to current config.
+  void _applyBroadcastConfig(DeviceConfig cfg, dynamic broadcasting) {
+    if (broadcasting is! Map<String, dynamic>) return;
+    final key = (broadcasting['key'] ?? '').toString();
+    if (key.isEmpty) return;
+    log.i('Applying broadcast config from server (key received)');
+    final next = cfg.copyWith(reverbAppKey: key).withDerivedWsUrl();
+    _saveConfig(next);
+    state = state.copyWith(config: next);
   }
 
   Future<void> _resolveSession() async {
@@ -233,8 +421,10 @@ class AppController extends StateNotifier<AppState> {
     _ws = ReverbService(
       log: log,
       onPrintEvent: (payload) async => enqueueFromPayload(payload),
-      onConnect: () => state = state.copyWith(wsConnected: true, lastWsError: ''),
-      onDisconnect: (reason) => state = state.copyWith(wsConnected: false, lastWsError: reason ?? ''),
+      onConnect: () =>
+          state = state.copyWith(wsConnected: true, lastWsError: ''),
+      onDisconnect: (reason) =>
+          state = state.copyWith(wsConnected: false, lastWsError: reason ?? ''),
       onError: (msg) => state = state.copyWith(lastWsError: msg),
     );
     _ws!.connect(state.config.wsUrl);
@@ -273,7 +463,8 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void _startWsStatusMonitor() {
-    Timer.periodic(const Duration(seconds: 5), (_) {
+    _wsStatusTimer?.cancel();
+    _wsStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       final connected = _ws?.isConnected ?? false;
       if (state.wsConnected != connected) {
         state = state.copyWith(wsConnected: connected);
@@ -282,7 +473,8 @@ class AppController extends StateNotifier<AppState> {
   }
 
   void _startPrinterStatusMonitor() {
-    Timer.periodic(const Duration(seconds: 5), (_) async {
+    _printerStatusTimer?.cancel();
+    _printerStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       // Skip check if printer address not configured
       if ((state.config.printerAddress ?? '').isEmpty) return;
 
@@ -377,11 +569,17 @@ class AppController extends StateNotifier<AppState> {
     // 'order_id' is nested inside 'order'; 'device_id' and 'session_id' are absent
     // from the response so we fall back to local config/state values.
     final orderMap = payload['order'] as Map<String, dynamic>?;
-    final peid = payload['print_event_id'] ?? payload['printEventId'] ?? payload['id'];
-    final orderId = payload['order_id'] ?? payload['orderId'] ?? orderMap?['order_id'];
-    final deviceId =
-        (payload['device_id'] ?? payload['deviceId'] ?? state.config.deviceId ?? '').toString();
-    final sessionId = payload['session_id'] ?? payload['sessionId'] ?? state.sessionId;
+    final peid =
+        payload['print_event_id'] ?? payload['printEventId'] ?? payload['id'];
+    final orderId =
+        payload['order_id'] ?? payload['orderId'] ?? orderMap?['order_id'];
+    final deviceId = (payload['device_id'] ??
+            payload['deviceId'] ??
+            state.config.deviceId ??
+            '')
+        .toString();
+    final sessionId =
+        payload['session_id'] ?? payload['sessionId'] ?? state.sessionId;
 
     log.i(
         'Payload validation: print_event_id=$peid, order_id=$orderId, device_id=$deviceId, session_id=$sessionId');
@@ -400,8 +598,7 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
 
-    // C4: Device_id filtering - TEMPORARILY DISABLED for emergency printing
-    // TODO: Re-enable after device lookup is working
+    // C4: Device_id filtering to reject cross-device events.
     final myDeviceId = state.config.deviceId ?? '';
     if (myDeviceId.isNotEmpty &&
         deviceId.isNotEmpty &&
@@ -553,6 +750,61 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(queue: const []);
   }
 
+  Future<List<Map<String, dynamic>>> getDeadLetterJobs() async {
+    return ref.read(queueStoreProvider).allDeadLetters();
+  }
+
+  Future<void> retryDeadLetterJob(int printEventId) async {
+    final store = ref.read(queueStoreProvider);
+    final raw = await store.getDeadLetter(printEventId);
+    if (raw == null) return;
+
+    try {
+      final job = PrintJob.fromJson(raw);
+      await store.upsert(job.copyWith(
+        status: PrintJobStatus.pending,
+        retryCount: 0,
+        ackAttempts: 0,
+        lastAckAttempt: null,
+        printerReconnectAttempts: 0,
+        lastPrinterReconnectAttempt: null,
+        lastError: null,
+      ));
+      await store.removeDeadLetter(printEventId);
+      await _reopenFailedJobMetric();
+      state = state.copyWith(queue: await store.all());
+      log.i('Requeued dead-letter print_event_id=$printEventId');
+    } catch (e, st) {
+      log.e(
+          'Failed to requeue dead-letter print_event_id=$printEventId', e, st);
+      state =
+          state.copyWith(lastError: 'Failed to requeue dead-letter job: $e');
+    }
+  }
+
+  Future<void> discardDeadLetterJob(int printEventId) async {
+    await ref.read(queueStoreProvider).removeDeadLetter(printEventId);
+    log.i('Discarded dead-letter print_event_id=$printEventId');
+  }
+
+  Future<void> discardAllDeadLetterJobs() async {
+    final store = ref.read(queueStoreProvider);
+    final all = await store.allDeadLetters();
+    for (final item in all) {
+      final id = item['printEventId'] as int?;
+      if (id != null) await store.removeDeadLetter(id);
+    }
+    log.i('Discarded ${all.length} dead-letter job(s)');
+  }
+
+  Future<void> retryAllDeadLetterJobs() async {
+    final jobs = await getDeadLetterJobs();
+    for (final raw in jobs) {
+      final id = raw['printEventId'] as int?;
+      if (id != null) await retryDeadLetterJob(id);
+    }
+  }
+
   Future<void> forcePoll() async {
     final polling = _polling;
     log.i('Force poll requested');
@@ -596,12 +848,20 @@ class AppController extends StateNotifier<AppState> {
             if (next.printerReconnectAttempts >= 5) {
               log.w(
                   'Printer reconnect max attempts (5) exceeded for job ${next.printEventId}, marking as failed');
+              final failedJob = next.copyWith(
+                status: PrintJobStatus.failed,
+                lastError: 'Printer reconnect max attempts exceeded',
+              );
               await store.updateJob(
                   next.printEventId,
                   (old) => old.copyWith(
                         status: PrintJobStatus.failed,
                         lastError: 'Printer reconnect max attempts exceeded',
                       ));
+              await _moveToDeadLetter(
+                failedJob,
+                reason: 'printer_reconnect_max_attempts',
+              );
               state = state.copyWith(queue: await store.all());
               return;
             }
@@ -618,6 +878,15 @@ class AppController extends StateNotifier<AppState> {
               final now = DateTime.now().toUtc();
               final newAttempts = next.printerReconnectAttempts + 1;
               final failed = newAttempts >= 5;
+              await _recordReconnectAttempt(newAttempts, now);
+              final failedJob = next.copyWith(
+                printerReconnectAttempts: newAttempts,
+                lastPrinterReconnectAttempt: now,
+                status: failed ? PrintJobStatus.failed : next.status,
+                lastError: failed
+                    ? 'Printer reconnect max attempts exceeded'
+                    : 'Printer reconnect failed',
+              );
 
               await store.updateJob(
                   next.printEventId,
@@ -629,6 +898,13 @@ class AppController extends StateNotifier<AppState> {
                             ? 'Printer reconnect max attempts exceeded'
                             : 'Printer reconnect failed',
                       ));
+              if (failed) {
+                await _recordJobFailure(now);
+                await _moveToDeadLetter(
+                  failedJob,
+                  reason: 'printer_reconnect_max_attempts',
+                );
+              }
               state = state.copyWith(queue: await store.all());
               return;
             }
@@ -689,10 +965,12 @@ class AppController extends StateNotifier<AppState> {
 
         if (ackOk) {
           // ACK succeeded: mark success
+          final completedAt = DateTime.now().toUtc();
           await store.updateJob(
               next.printEventId,
               (old) => old.copyWith(
                   status: PrintJobStatus.success, lastError: null));
+          await _recordJobSuccess(completedAt);
         } else {
           // ACK failed: leave as printed_awaiting_ack for flush service to retry
           await store.updateJob(next.printEventId,
@@ -710,12 +988,20 @@ class AppController extends StateNotifier<AppState> {
     final nextRetry = job.retryCount + 1;
 
     if (nextRetry >= AppConstants.maxPrintAttempts) {
+      final failedAt = DateTime.now().toUtc();
+      final failedJob = job.copyWith(
+        status: PrintJobStatus.failed,
+        retryCount: nextRetry,
+        lastError: error,
+      );
       await store.updateJob(
           job.printEventId,
           (old) => old.copyWith(
               status: PrintJobStatus.failed,
               retryCount: nextRetry,
               lastError: error));
+      await _recordJobFailure(failedAt);
+      await _moveToDeadLetter(failedJob, reason: 'print_max_attempts');
       state = state.copyWith(queue: await store.all());
 
       await ref.read(apiProvider).markPrintEventFailed(
@@ -766,12 +1052,19 @@ class AppController extends StateNotifier<AppState> {
           if (ackAttempts >= 3) {
             log.w(
                 'ACK max retries exceeded for print_event_id=${job.printEventId}, marking as failed');
+            final failedAt = DateTime.now().toUtc();
+            final failedJob = job.copyWith(
+              status: PrintJobStatus.failed,
+              lastError: 'ACK failed after 3 retries',
+            );
             await store.updateJob(
                 job.printEventId,
                 (old) => old.copyWith(
                       status: PrintJobStatus.failed,
                       lastError: 'ACK failed after 3 retries',
                     ));
+            await _recordJobFailure(failedAt);
+            await _moveToDeadLetter(failedJob, reason: 'ack_max_retries');
             state = state.copyWith(queue: await store.all());
             continue;
           }
@@ -817,12 +1110,14 @@ class AppController extends StateNotifier<AppState> {
 
           if (ackOk) {
             log.i('ACK succeeded for print_event_id=${job.printEventId}');
+            final completedAt = DateTime.now().toUtc();
             await store.updateJob(
                 job.printEventId,
                 (old) => old.copyWith(
                       status: PrintJobStatus.success,
                       lastError: null,
                     ));
+            await _recordJobSuccess(completedAt);
           } else {
             // Increment attempt counter and update last attempt time
             final newAttempts = (job.ackAttempts ?? 0) + 1;
@@ -831,12 +1126,19 @@ class AppController extends StateNotifier<AppState> {
             if (newAttempts >= 3) {
               log.w(
                   'ACK max retries exceeded for print_event_id=${job.printEventId}, marking as failed');
+              final failedAt = DateTime.now().toUtc();
+              final failedJob = job.copyWith(
+                status: PrintJobStatus.failed,
+                lastError: 'ACK failed after 3 retries',
+              );
               await store.updateJob(
                   job.printEventId,
                   (old) => old.copyWith(
                         status: PrintJobStatus.failed,
                         lastError: 'ACK failed after 3 retries',
                       ));
+              await _recordJobFailure(failedAt);
+              await _moveToDeadLetter(failedJob, reason: 'ack_max_retries');
             } else {
               await store.updateJob(
                   job.printEventId,
@@ -855,7 +1157,24 @@ class AppController extends StateNotifier<AppState> {
     });
   }
 
+  Future<void> _moveToDeadLetter(
+    PrintJob job, {
+    required String reason,
+  }) async {
+    try {
+      await ref.read(queueStoreProvider).moveToDeadLetter(job, reason: reason);
+      log.w(
+          'Moved print_event_id=${job.printEventId} to dead-letter queue (reason=$reason)');
+    } catch (e, st) {
+      log.e(
+          'Failed to move print_event_id=${job.printEventId} to dead-letter queue',
+          e,
+          st);
+    }
+  }
+
   Future<void> updateConfig(DeviceConfig cfg) async {
+    AppConstants.updateTrustedHosts(cfg.apiBaseUrl);
     await _saveConfig(cfg);
     state = state.copyWith(config: cfg);
     _startWs();
@@ -898,7 +1217,15 @@ class AppController extends StateNotifier<AppState> {
       return 'Invalid response: missing token or device id';
     }
 
-    final next = state.config.copyWith(authToken: token, deviceId: deviceId);
+    // Extract Reverb app key from broadcasting config if available
+    String reverbAppKey = state.config.reverbAppKey;
+    final broadcasting = res['broadcasting'] as Map<String, dynamic>?;
+    if (broadcasting != null && (broadcasting['key'] ?? '').toString().isNotEmpty) {
+      reverbAppKey = broadcasting['key'].toString();
+      log.i('Received Reverb app key from registration response');
+    }
+
+    final next = state.config.copyWith(authToken: token, deviceId: deviceId, reverbAppKey: reverbAppKey).withDerivedWsUrl();
     await _saveConfig(next);
     state = state.copyWith(config: next);
     log.i('✅ Device registered: device_id=$deviceId');
@@ -915,17 +1242,13 @@ class AppController extends StateNotifier<AppState> {
   Future<void> _loadConfig() async {
     final sp = await SharedPreferences.getInstance();
 
-    // Migration: Auto-upgrade old HTTP URLs to HTTPS
     var apiBaseUrl =
         sp.getString('apiBaseUrl') ?? AppConstants.defaultApiBaseUrl;
     final reverbAppKey =
         sp.getString('reverbAppKey') ?? AppConstants.defaultReverbAppKey;
 
-    if (apiBaseUrl.startsWith('http://')) {
-      apiBaseUrl = apiBaseUrl.replaceFirst('http://', 'https://');
-      await sp.setString('apiBaseUrl', apiBaseUrl);
-      log.i('Migrated API URL to HTTPS: $apiBaseUrl');
-    }
+    // Update trusted hosts for self-signed cert validation
+    AppConstants.updateTrustedHosts(apiBaseUrl);
 
     // Always re-derive the WS URL from apiBaseUrl + reverbAppKey so it stays in sync.
     // This replaces the old :6001 / ws:// migration and ensures any server change
@@ -1000,10 +1323,13 @@ class AppController extends StateNotifier<AppState> {
   void dispose() {
     _queueTimer?.cancel();
     _ackFlushTimer?.cancel();
+    _wsStatusTimer?.cancel();
+    _printerStatusTimer?.cancel();
     _polling?.stop();
     _hb?.stop();
     _ws?.disconnect();
     _connectivitySub?.cancel();
+    unawaited(ref.read(queueStoreProvider).close());
     log.dispose();
     super.dispose();
   }

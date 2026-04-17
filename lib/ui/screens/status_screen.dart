@@ -34,20 +34,6 @@ class StatusScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Woosoo Relay Device'),
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.history),
-              onPressed: () => context.push('/orders')),
-          IconButton(
-              icon: const Icon(Icons.analytics),
-              onPressed: () => context.push('/metrics')),
-          IconButton(
-              icon: const Icon(Icons.list),
-              onPressed: () => context.push('/queue')),
-          IconButton(
-              icon: const Icon(Icons.settings),
-              onPressed: () => context.push('/settings')),
-        ],
       ),
       body: RefreshIndicator(
         onRefresh: () async => ctrl.forcePoll(),
@@ -61,25 +47,33 @@ class StatusScreen extends ConsumerWidget {
                 _kv('Initialized', st.initialized ? 'Yes' : 'No'),
                 _kv('Device ID', st.config.deviceId ?? '—'),
                 _kv('Session', st.sessionId?.toString() ?? '—'),
+                _kv('Platform', st.platform),
+                _kv('OS Version', st.osVersion),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _card('Connection', [
                 _kvWithIndicator('Network', st.networkConnected,
                     onlineText: 'Online', offlineText: 'Offline'),
                 if (!st.networkConnected && (st.lastPollError ?? '').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 16, bottom: 4),
-                    child: Text(st.lastPollError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                    child: Text(st.lastPollError!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12)),
                   ),
                 _kvWithIndicator('WebSocket', st.wsConnected,
                     onlineText: 'Connected', offlineText: 'Disconnected'),
                 if (!st.wsConnected && (st.lastWsError ?? '').isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(left: 16, bottom: 4),
-                    child: Text(st.lastWsError!, style: const TextStyle(color: Colors.red, fontSize: 12)),
+                    child: Text(st.lastWsError!,
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12)),
                   ),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _card('Printer', [
                 _kvWithIndicator('Connected', st.printer.connected,
                     onlineText: 'Ready', offlineText: 'Not connected'),
@@ -89,7 +83,8 @@ class StatusScreen extends ConsumerWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 6),
                     child: Text('Error: ${st.printer.error}',
-                        style: const TextStyle(color: Colors.red)),
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.error)),
                   ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -119,7 +114,7 @@ class StatusScreen extends ConsumerWidget {
                   ],
                 ),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _card('Queue', [
                 _kv('Pending', st.pendingCount.toString()),
                 _kv('Printing', printingCount.toString()),
@@ -129,11 +124,23 @@ class StatusScreen extends ConsumerWidget {
                 _kv('Last Job', lastJobTime?.toIso8601String() ?? '—'),
               ]),
               if ((st.lastError ?? '').isNotEmpty) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 _card('Last Error', [
-                  Text(st.lastError!, style: const TextStyle(color: Colors.red))
+                  Text(
+                    () {
+                      final msg = st.lastError!.trim();
+                      return msg.length > 120
+                          ? '${msg.substring(0, 120)}…'
+                          : msg;
+                    }(),
+                    style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 13),
+                  )
                 ]),
               ],
+              // Task 2.6: Dead letter warning — navigates to /dead-letter when count > 3
+              _DeadLetterWarning(),
             ],
           ),
         ),
@@ -165,10 +172,14 @@ class StatusScreen extends ConsumerWidget {
                 width: 120,
                 child: Text(k,
                     style: const TextStyle(fontWeight: FontWeight.w600))),
-            Icon(
-              connected ? Icons.check_circle : Icons.cancel,
-              color: connected ? Colors.green : Colors.red,
-              size: 20,
+            Builder(
+              builder: (ctx) => Icon(
+                connected ? Icons.check_circle : Icons.cancel,
+                color: connected
+                    ? Theme.of(ctx).colorScheme.tertiary
+                    : Theme.of(ctx).colorScheme.error,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 8),
             Text(connected ? onlineText : offlineText),
@@ -177,12 +188,18 @@ class StatusScreen extends ConsumerWidget {
       );
 
   Widget _card(String title, List<Widget> children) => Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            Text(title,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 10),
             ...children,
           ]),
         ),
@@ -233,5 +250,63 @@ class StatusScreen extends ConsumerWidget {
             backgroundColor: result.success ? Colors.green : Colors.red),
       );
     }
+  }
+}
+
+/// Warning banner shown on Status screen when dead-letter queue has > 3 items.
+class _DeadLetterWarning extends ConsumerStatefulWidget {
+  const _DeadLetterWarning();
+
+  @override
+  ConsumerState<_DeadLetterWarning> createState() => _DeadLetterWarningState();
+}
+
+class _DeadLetterWarningState extends ConsumerState<_DeadLetterWarning> {
+  late final Future<List<Map<String, dynamic>>> _deadLetterJobsFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _deadLetterJobsFuture =
+        ref.read(appControllerProvider.notifier).getDeadLetterJobs();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _deadLetterJobsFuture,
+      builder: (context, snap) {
+        final count = snap.data?.length ?? 0;
+        if (count <= 3) return const SizedBox.shrink();
+
+        return Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: InkWell(
+            onTap: () => context.push('/dead-letter'),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade700,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning_amber_outlined, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$count jobs in dead-letter queue — tap to review',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const Icon(Icons.chevron_right, color: Colors.white),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

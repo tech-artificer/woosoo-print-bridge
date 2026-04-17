@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 
+import 'printer_status_banner.dart';
+
 class AppShell extends StatefulWidget {
   final Widget child;
   final GoRouter router;
@@ -14,22 +16,51 @@ class AppShell extends StatefulWidget {
 class _AppShellState extends State<AppShell> {
   DateTime? _lastBack;
 
+  static const _navRoutes = ['/', '/queue', '/metrics', '/orders', '/settings'];
+  static const _navIcons = [
+    Icons.home_outlined,
+    Icons.list_alt_outlined,
+    Icons.bar_chart_outlined,
+    Icons.history_outlined,
+    Icons.settings_outlined,
+  ];
+  static const _navLabels = ['Status', 'Queue', 'Metrics', 'Orders', 'Settings'];
+
+  @override
+  void initState() {
+    super.initState();
+    widget.router.routeInformationProvider.addListener(_onRouteChange);
+  }
+
+  @override
+  void dispose() {
+    widget.router.routeInformationProvider.removeListener(_onRouteChange);
+    super.dispose();
+  }
+
+  void _onRouteChange() {
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
-    final router = widget.router;
+    final location = widget.router.routeInformationProvider.value.uri.path;
+    final navIndex = _navRoutes.indexOf(location);
+    final showNav = navIndex >= 0;
+
     return PopScope(
       canPop: false,
       onPopInvoked: (didPop) async {
         if (didPop) return;
 
-        final location = router.routeInformationProvider.value.uri.path;
+        final loc = widget.router.routeInformationProvider.value.uri.path;
 
         // If we are not on home, pop the route stack first.
-        if (location != '/') {
-          if (router.canPop()) {
-            router.pop();
+        if (loc != '/') {
+          if (widget.router.canPop()) {
+            widget.router.pop();
           } else {
-            router.go('/');
+            widget.router.go('/');
           }
           return;
         }
@@ -46,11 +77,38 @@ class _AppShellState extends State<AppShell> {
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Press back again to exit')),
+            const SnackBar(
+              content: Text('Press back again to exit'),
+              duration: Duration(seconds: 2),
+            ),
           );
         }
       },
-      child: widget.child,
+      child: Scaffold(
+        body: Column(
+          children: [
+            const PrinterStatusBanner(),
+            Expanded(child: widget.child),
+          ],
+        ),
+        bottomNavigationBar: showNav
+            ? NavigationBar(
+                selectedIndex: navIndex,
+                onDestinationSelected: (i) {
+                  if (i != navIndex) {
+                    widget.router.go(_navRoutes[i]);
+                  }
+                },
+                destinations: [
+                  for (int i = 0; i < _navRoutes.length; i++)
+                    NavigationDestination(
+                      icon: Icon(_navIcons[i]),
+                      label: _navLabels[i],
+                    ),
+                ],
+              )
+            : null,
+      ),
     );
   }
 }
