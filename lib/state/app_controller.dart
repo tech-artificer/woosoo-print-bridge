@@ -169,6 +169,12 @@ class AppController extends StateNotifier<AppState> {
       log.i('Bluetooth permissions granted');
     }
 
+    // Cold-start: fetch broadcasting config from server if Reverb key is empty
+    if (state.config.reverbAppKey.isEmpty && state.config.apiBaseUrl.isNotEmpty) {
+      log.i('STEP 0: Fetching broadcast config (cold-start, no cached key)');
+      await _fetchBroadcastConfig();
+    }
+
     log.i('STEP 1: Device authentication');
     await _ensureDeviceAuth();
     log.i(
@@ -302,11 +308,24 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(authenticating: true);
     try {
       log.i('Attempting device lookup by IP from ${cfg.apiBaseUrl}');
-      final device =
+      final response =
           await ref.read(apiProvider).lookupDeviceByIp(cfg.apiBaseUrl);
-      if (device == null) {
+      if (response == null) {
         log.w(
             'Device lookup returned null - device not registered or API failed');
+        state = state.copyWith(
+            lastError: 'Device not registered (lookup-by-ip not found)');
+        return;
+      }
+
+      // Extract device info from the full response
+      final device = response['device'] as Map<String, dynamic>?;
+      final found = response['found'] == true;
+
+      if (!found || device == null) {
+        log.w('Device not found in lookup response');
+        // Still extract broadcasting config even when device not found
+        _applyBroadcastConfig(cfg, response['broadcasting']);
         state = state.copyWith(
             lastError: 'Device not registered (lookup-by-ip not found)');
         return;
@@ -317,13 +336,22 @@ class AppController extends StateNotifier<AppState> {
       log.i(
           'Device lookup successful: device_id=$deviceId, has_token=${authToken.isNotEmpty}');
 
+      // Extract Reverb app key from broadcasting config if available
+      String reverbAppKey = cfg.reverbAppKey;
+      final broadcasting = response['broadcasting'] as Map<String, dynamic>?;
+      if (broadcasting != null && (broadcasting['key'] ?? '').toString().isNotEmpty) {
+        reverbAppKey = broadcasting['key'].toString();
+        log.i('Received Reverb app key from server');
+      }
+
       final next = cfg.copyWith(
         deviceId: deviceId,
         authToken: authToken,
+        reverbAppKey: reverbAppKey,
         printerName: (device['printer_name'] ?? cfg.printerName)?.toString(),
         printerAddress:
             (device['bluetooth_address'] ?? cfg.printerAddress)?.toString(),
-      );
+      ).withDerivedWsUrl();
 
       await _saveConfig(next);
       state = state.copyWith(config: next);
@@ -334,6 +362,32 @@ class AppController extends StateNotifier<AppState> {
     } finally {
       state = state.copyWith(authenticating: false);
     }
+  }
+
+  /// Fetch broadcasting config from the unauthenticated /api/config endpoint.
+  /// Used on cold-start when no Reverb key is cached yet.
+  Future<void> _fetchBroadcastConfig() async {
+    try {
+      final res = await ref.read(apiProvider).fetchConfig(state.config.apiBaseUrl);
+      if (res == null) {
+        log.w('Cold-start config fetch returned null');
+        return;
+      }
+      _applyBroadcastConfig(state.config, res['broadcasting']);
+    } catch (e) {
+      log.w('Cold-start config fetch failed: $e');
+    }
+  }
+
+  /// Apply broadcasting config from server response to current config.
+  void _applyBroadcastConfig(DeviceConfig cfg, dynamic broadcasting) {
+    if (broadcasting is! Map<String, dynamic>) return;
+    final key = (broadcasting['key'] ?? '').toString();
+    if (key.isEmpty) return;
+    log.i('Applying broadcast config from server (key received)');
+    final next = cfg.copyWith(reverbAppKey: key).withDerivedWsUrl();
+    _saveConfig(next);
+    state = state.copyWith(config: next);
   }
 
   Future<void> _resolveSession() async {
@@ -1120,6 +1174,7 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> updateConfig(DeviceConfig cfg) async {
+    AppConstants.updateTrustedHosts(cfg.apiBaseUrl);
     await _saveConfig(cfg);
     state = state.copyWith(config: cfg);
     _startWs();
@@ -1162,7 +1217,15 @@ class AppController extends StateNotifier<AppState> {
       return 'Invalid response: missing token or device id';
     }
 
-    final next = state.config.copyWith(authToken: token, deviceId: deviceId);
+    // Extract Reverb app key from broadcasting config if available
+    String reverbAppKey = state.config.reverbAppKey;
+    final broadcasting = res['broadcasting'] as Map<String, dynamic>?;
+    if (broadcasting != null && (broadcasting['key'] ?? '').toString().isNotEmpty) {
+      reverbAppKey = broadcasting['key'].toString();
+      log.i('Received Reverb app key from registration response');
+    }
+
+    final next = state.config.copyWith(authToken: token, deviceId: deviceId, reverbAppKey: reverbAppKey).withDerivedWsUrl();
     await _saveConfig(next);
     state = state.copyWith(config: next);
     log.i('✅ Device registered: device_id=$deviceId');
@@ -1179,17 +1242,13 @@ class AppController extends StateNotifier<AppState> {
   Future<void> _loadConfig() async {
     final sp = await SharedPreferences.getInstance();
 
-    // Migration: Auto-upgrade old HTTP URLs to HTTPS
     var apiBaseUrl =
         sp.getString('apiBaseUrl') ?? AppConstants.defaultApiBaseUrl;
     final reverbAppKey =
         sp.getString('reverbAppKey') ?? AppConstants.defaultReverbAppKey;
 
-    if (apiBaseUrl.startsWith('http://')) {
-      apiBaseUrl = apiBaseUrl.replaceFirst('http://', 'https://');
-      await sp.setString('apiBaseUrl', apiBaseUrl);
-      log.i('Migrated API URL to HTTPS: $apiBaseUrl');
-    }
+    // Update trusted hosts for self-signed cert validation
+    AppConstants.updateTrustedHosts(apiBaseUrl);
 
     // Always re-derive the WS URL from apiBaseUrl + reverbAppKey so it stays in sync.
     // This replaces the old :6001 / ws:// migration and ensures any server change

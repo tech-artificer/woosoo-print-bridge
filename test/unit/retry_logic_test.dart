@@ -46,21 +46,20 @@ void main() {
   });
 
   group('Trusted local hosts', () {
-    test('Pi IP is trusted', () {
+    test('localhost is always trusted', () {
+      AppConstants.updateTrustedHosts(null);
+      expect(AppConstants.trustedLocalHosts.contains('localhost'), isTrue);
+    });
+
+    test('API host is trusted after updateTrustedHosts', () {
+      AppConstants.updateTrustedHosts('https://192.168.100.7:8443');
       expect(AppConstants.trustedLocalHosts.contains('192.168.100.7'), isTrue);
-    });
-
-    test('woosoo.local is trusted', () {
-      expect(AppConstants.trustedLocalHosts.contains('woosoo.local'), isTrue);
-    });
-
-    test('api.woosoo.local is trusted', () {
-      expect(AppConstants.trustedLocalHosts.contains('api.woosoo.local'), isTrue);
+      expect(AppConstants.trustedLocalHosts.contains('localhost'), isTrue);
     });
 
     test('external host is NOT trusted', () {
+      AppConstants.updateTrustedHosts('https://192.168.100.7:8443');
       expect(AppConstants.trustedLocalHosts.contains('google.com'), isFalse);
-      expect(AppConstants.trustedLocalHosts.contains('192.168.1.1'), isFalse);
       expect(AppConstants.trustedLocalHosts.contains(''), isFalse);
     });
   });

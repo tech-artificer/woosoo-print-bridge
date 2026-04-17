@@ -50,7 +50,7 @@ class StatusScreen extends ConsumerWidget {
                 _kv('Platform', st.platform),
                 _kv('OS Version', st.osVersion),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _card('Connection', [
                 _kvWithIndicator('Network', st.networkConnected,
                     onlineText: 'Online', offlineText: 'Offline'),
@@ -73,7 +73,7 @@ class StatusScreen extends ConsumerWidget {
                             fontSize: 12)),
                   ),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _card('Printer', [
                 _kvWithIndicator('Connected', st.printer.connected,
                     onlineText: 'Ready', offlineText: 'Not connected'),
@@ -114,7 +114,7 @@ class StatusScreen extends ConsumerWidget {
                   ],
                 ),
               ]),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
               _card('Queue', [
                 _kv('Pending', st.pendingCount.toString()),
                 _kv('Printing', printingCount.toString()),
@@ -124,7 +124,7 @@ class StatusScreen extends ConsumerWidget {
                 _kv('Last Job', lastJobTime?.toIso8601String() ?? '—'),
               ]),
               if ((st.lastError ?? '').isNotEmpty) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
                 _card('Last Error', [
                   Text(
                     () {
@@ -188,12 +188,18 @@ class StatusScreen extends ConsumerWidget {
       );
 
   Widget _card(String title, List<Widget> children) => Card(
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
         child: Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(16),
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
+            Text(title,
+                style: const TextStyle(
+                    fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 10),
             ...children,
           ]),
         ),

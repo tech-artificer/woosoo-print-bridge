@@ -27,7 +27,6 @@ class MetricsDashboardScreen extends ConsumerWidget {
     final reconnectMax = st.historicalReconnectAttemptMax;
     final lastReconnect = st.historicalLastReconnectAttempt;
     final lastJobTime = st.historicalLastJobTime;
-    final trackingSince = st.metricsTrackingSince;
     final uptime = ctrl.uptime;
 
     final recent = ctrl.recentJobs(limit: 5);

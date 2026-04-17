@@ -97,20 +97,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               controller: _apiCtl,
               decoration: const InputDecoration(
                 labelText: 'API Base URL',
-                hintText: 'https://192.168.100.7:8443',
+                hintText: 'https://your-server:8443',
               ),
               autocorrect: false,
               keyboardType: TextInputType.url,
             ),
             const SizedBox(height: 8),
-            TextField(
-              controller: _appKeyCtl,
-              decoration: const InputDecoration(
-                labelText: 'Reverb App Key',
-                hintText: 'From woosoo-nexus REVERB_APP_KEY',
+            // Reverb App Key — auto-fetched from server; shown read-only for diagnostics
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black26,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.white12),
               ),
-              autocorrect: false,
-              textCapitalization: TextCapitalization.none,
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Reverb App Key (auto-fetched from server)', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                const SizedBox(height: 2),
+                Text(
+                  _maskSensitive(_appKeyCtl.text, keepStart: 4, keepEnd: 4),
+                  style: const TextStyle(fontSize: 11, color: Colors.white70),
+                ),
+              ]),
             ),
             const SizedBox(height: 8),
             // Auto-derived WS URL — read-only preview

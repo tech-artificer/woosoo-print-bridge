@@ -67,14 +67,25 @@ class ApiService {
     return Uri.parse('$b$p').replace(queryParameters: q);
   }
 
+  /// Returns the full response body (includes `device` + `broadcasting`).
+  /// Returns null on network failure or non-200 status.
   Future<Map<String, dynamic>?> lookupDeviceByIp(String apiBaseUrl) async {
     return _retry(() async {
       final res = await _client.get(_u(apiBaseUrl, '/api/device/lookup-by-ip'), headers: _headers()).timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return null;
       final j = jsonDecode(res.body) as Map<String, dynamic>;
-      if (j['found'] == true && j['device'] != null) return Map<String, dynamic>.from(j['device']);
-      return null;
+      return j;
     }, op: 'lookupDeviceByIp');
+  }
+
+  /// Fetch public config (broadcasting, app_version) from unauthenticated endpoint.
+  /// Used on cold-start when no cached config exists.
+  Future<Map<String, dynamic>?> fetchConfig(String apiBaseUrl) async {
+    return _retry(() async {
+      final res = await _client.get(_u(apiBaseUrl, '/api/config'), headers: _headers()).timeout(const Duration(seconds: 10));
+      if (res.statusCode != 200) return null;
+      return jsonDecode(res.body) as Map<String, dynamic>;
+    }, op: 'fetchConfig');
   }
 
   Future<Map<String, dynamic>?> getLatestSession(DeviceConfig cfg) async {
