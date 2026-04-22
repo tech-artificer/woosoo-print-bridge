@@ -49,6 +49,7 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.1"
+<<<<<<< HEAD
   checked_yaml:
     dependency: transitive
     description:
@@ -65,6 +66,8 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "0.4.2"
+=======
+>>>>>>> 52e7d08 (chore(print-bridge): update pubspec lockfile)
   clock:
     dependency: transitive
     description:
