@@ -1186,14 +1186,14 @@ class AppController extends StateNotifier<AppState> {
   /// On success saves the returned auth token + device ID and reconnects.
   /// Returns null on success, or an error message string on failure.
   Future<String?> registerDevice(
-      {required String name, required String code}) async {
+      {required String code}) async {
     final apiBaseUrl = state.config.apiBaseUrl;
-    log.i('Registering device: name=$name, apiBaseUrl=$apiBaseUrl');
+    log.i('Registering device with setup code: apiBaseUrl=$apiBaseUrl');
 
     Map<String, dynamic>? res;
     try {
       res = await ref.read(apiProvider).registerDevice(apiBaseUrl,
-          name: name, code: code, appVersion: '1.0.0+1');
+          code: code, appVersion: '1.0.0+1');
     } catch (e) {
       log.e('registerDevice exception: $e');
       return 'Network error: $e';

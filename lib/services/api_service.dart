@@ -14,7 +14,12 @@ class ApiService {
   final LoggerService log;
   late final http.Client _client;
   
-  ApiService(this.log) {
+  ApiService(this.log, {http.Client? client}) {
+    if (client != null) {
+      _client = client;
+      return;
+    }
+
     final httpClient = HttpClient();
     // Accept self-signed certificates from known local Pi hosts in all build modes.
     // In debug mode: accept all (existing behaviour preserved for development).
@@ -153,17 +158,18 @@ class ApiService {
   /// Register a new device using a one-time registration code.
   /// Returns the full response body on success (contains `token` and `device`),
   /// or a map with `_error: true` on failure.
-  Future<Map<String, dynamic>?> registerDevice(String apiBaseUrl, {required String name, required String code, String? appVersion}) async {
+  Future<Map<String, dynamic>?> registerDevice(String apiBaseUrl, {required String code, String? appVersion}) async {
     return _retry(() async {
       final body = jsonEncode({
-        'name': name,
-        'code': code,
+        'security_code': code,
         if (appVersion != null) 'app_version': appVersion,
       });
       final res = await _client
           .post(_u(apiBaseUrl, '/api/devices/register'), headers: _headers(), body: body)
           .timeout(const Duration(seconds: 15));
-      if (res.statusCode == 201) return jsonDecode(res.body) as Map<String, dynamic>;
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        return jsonDecode(res.body) as Map<String, dynamic>;
+      }
       try {
         return {'_error': true, 'body': jsonDecode(res.body), 'status': res.statusCode};
       } catch (_) {}

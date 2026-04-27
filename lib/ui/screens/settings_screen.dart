@@ -22,7 +22,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _derivedWsUrl = '';
 
   // Registration
-  final _regNameCtl = TextEditingController(text: 'Kitchen Relay');
   final _regCodeCtl = TextEditingController();
   bool _registering = false;
   String? _regResult;
@@ -64,7 +63,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _apiCtl.dispose();
     _appKeyCtl.dispose();
     _printerIdCtl.dispose();
-    _regNameCtl.dispose();
     _regCodeCtl.dispose();
     super.dispose();
   }
@@ -178,14 +176,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ]),
               ),
             TextField(
-              controller: _regNameCtl,
-              decoration: const InputDecoration(
-                labelText: 'Device Name',
-                hintText: 'e.g. Kitchen Relay',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
               controller: _regCodeCtl,
               decoration: const InputDecoration(
                 labelText: 'Registration Code',
@@ -283,14 +273,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _doRegister(AppController ctrl) async {
-    final name = _regNameCtl.text.trim();
     final code = _regCodeCtl.text.trim();
-    if (name.isEmpty || code.isEmpty) {
-      setState(() { _regResult = 'Name and code are required.'; _regSuccess = false; });
+    if (code.isEmpty) {
+      setState(() { _regResult = 'Registration code is required.'; _regSuccess = false; });
       return;
     }
     setState(() { _registering = true; _regResult = null; });
-    final error = await ctrl.registerDevice(name: name, code: code);
+    final error = await ctrl.registerDevice(code: code);
     if (!mounted) return;
     setState(() {
       _registering = false;
