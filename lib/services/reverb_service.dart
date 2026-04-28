@@ -56,13 +56,15 @@ class ReverbService {
       httpClient.badCertificateCallback =
           (X509Certificate cert, String host, int port) {
         if (kDebugMode) {
-          log.w('WS accepting self-signed certificate from $host:$port (debug mode)');
+          log.w(
+              'WS accepting self-signed certificate from $host:$port (debug mode)');
           return true;
         }
         // Outside debug mode, only allow self-signed certificates for trusted local hosts.
         final trusted = AppConstants.trustedLocalHosts.contains(host);
         if (trusted) {
-          log.w('WS accepting self-signed certificate from trusted Pi host: $host:$port');
+          log.w(
+              'WS accepting self-signed certificate from trusted Pi host: $host:$port');
         }
         return trusted;
       };
@@ -167,16 +169,12 @@ class ReverbService {
 
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
-    if (_attempts >= 10) {
-      log.w('WS max reconnect attempts reached; polling continues');
-      return;
-    }
     _attempts++;
     final backoffIndex = _attempts <= _reconnectBackoff.length
         ? _attempts - 1
         : _reconnectBackoff.length - 1;
     final delaySeconds = _reconnectBackoff[backoffIndex];
-    log.i('WS reconnect in ${delaySeconds}s (attempt $_attempts/10)');
+    log.i('WS reconnect in ${delaySeconds}s (attempt $_attempts)');
     _reconnectTimer = Timer(Duration(seconds: delaySeconds), () async {
       if (!_connected) await _connectInternal();
     });

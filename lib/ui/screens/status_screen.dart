@@ -197,8 +197,8 @@ class StatusScreen extends ConsumerWidget {
           child:
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(title,
-                style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 15)),
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
             const SizedBox(height: 10),
             ...children,
           ]),
@@ -254,27 +254,16 @@ class StatusScreen extends ConsumerWidget {
 }
 
 /// Warning banner shown on Status screen when dead-letter queue has > 3 items.
-class _DeadLetterWarning extends ConsumerStatefulWidget {
+class _DeadLetterWarning extends ConsumerWidget {
   const _DeadLetterWarning();
 
   @override
-  ConsumerState<_DeadLetterWarning> createState() => _DeadLetterWarningState();
-}
+  Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(appControllerProvider.select((st) => st.queue.length));
+    final future = ref.read(appControllerProvider.notifier).getDeadLetterJobs();
 
-class _DeadLetterWarningState extends ConsumerState<_DeadLetterWarning> {
-  late final Future<List<Map<String, dynamic>>> _deadLetterJobsFuture;
-
-  @override
-  void initState() {
-    super.initState();
-    _deadLetterJobsFuture =
-        ref.read(appControllerProvider.notifier).getDeadLetterJobs();
-  }
-
-  @override
-  Widget build(BuildContext context) {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _deadLetterJobsFuture,
+      future: future,
       builder: (context, snap) {
         final count = snap.data?.length ?? 0;
         if (count <= 3) return const SizedBox.shrink();
@@ -297,7 +286,8 @@ class _DeadLetterWarningState extends ConsumerState<_DeadLetterWarning> {
                   Expanded(
                     child: Text(
                       '$count jobs in dead-letter queue — tap to review',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      style: const TextStyle(
+                          color: Colors.white, fontWeight: FontWeight.bold),
                     ),
                   ),
                   const Icon(Icons.chevron_right, color: Colors.white),
