@@ -14,10 +14,16 @@ class ReceiptBuilder58mm {
     final createdAtRaw = payload['created_at'] ?? payload['createdAt'];
     final createdAt =
         createdAtRaw is String ? DateTime.tryParse(createdAtRaw) : null;
+    final printType =
+        (payload['print_type'] ?? payload['printType'] ?? 'INITIAL')
+            .toString()
+            .toUpperCase();
+    final isRefill = printType == 'REFILL';
 
     final items = (payload['items'] as List?) ?? const [];
 
-    // Extract package (first item) separately
+    // Initial order payloads include the package as the first item.
+    // Refill payloads only include refill items, so do not skip the first item.
     final packageItem = items.isNotEmpty ? items.first : null;
     final packageName = packageItem != null
         ? (Map<String, dynamic>.from(packageItem as Map)['name'] ??
@@ -35,7 +41,7 @@ class ReceiptBuilder58mm {
     // HEADER: DINE IN centered with === borders
     lines.add('');
     lines.add(_equals());
-    lines.add(_center('DINE IN'));
+    lines.add(_center(isRefill ? 'REFILL' : 'DINE IN'));
     lines.add('');
 
     // DATE AND TIME on same line with spacing
@@ -47,8 +53,9 @@ class ReceiptBuilder58mm {
 
     lines.add(_equals());
 
-    // PACKAGE (first item)
-    lines.add('Package: $packageName');
+    if (!isRefill) {
+      lines.add('Package: $packageName');
+    }
 
     // META: Table and Guests
     if (tablename.isNotEmpty) lines.add('Table: $tablename');
@@ -56,8 +63,8 @@ class ReceiptBuilder58mm {
 
     lines.add(_hr());
 
-    // ITEMS: Start from index 1 (skip package at 0)
-    final itemsToDisplay = items.length > 1 ? items.sublist(1) : <dynamic>[];
+    final itemsToDisplay =
+        isRefill ? items : (items.length > 1 ? items.sublist(1) : <dynamic>[]);
 
     if (itemsToDisplay.isEmpty && items.isEmpty) {
       lines.add('(No items)');

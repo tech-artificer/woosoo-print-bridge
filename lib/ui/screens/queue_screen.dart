@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../../models/print_job.dart';
 import '../../state/app_controller.dart';
 
@@ -26,8 +27,10 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
         title: Text('Queue (${jobs.length})'),
         actions: [
           IconButton(
-              icon: const Icon(Icons.delete_forever),
-              onPressed: () => ctrl.clearQueue())
+            icon: const Icon(Icons.delete_forever),
+            tooltip: 'Clear queue',
+            onPressed: () => _confirmClearQueue(context, ctrl),
+          ),
         ],
       ),
       body: ListView(
@@ -35,44 +38,114 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
         children: [
           Wrap(
             spacing: 8,
+            runSpacing: 8,
             children: [
               ChoiceChip(
-                  label: const Text('All'),
-                  selected: filter == null,
-                  onSelected: (_) => setState(() => filter = null)),
+                label: const Text('All'),
+                selected: filter == null,
+                onSelected: (_) => setState(() => filter = null),
+              ),
               ChoiceChip(
-                  label: const Text('Pending'),
-                  selected: filter == PrintJobStatus.pending,
-                  onSelected: (_) =>
-                      setState(() => filter = PrintJobStatus.pending)),
+                label: const Text('Pending'),
+                selected: filter == PrintJobStatus.pending,
+                onSelected: (_) =>
+                    setState(() => filter = PrintJobStatus.pending),
+              ),
               ChoiceChip(
-                  label: const Text('Printing'),
-                  selected: filter == PrintJobStatus.printing,
-                  onSelected: (_) =>
-                      setState(() => filter = PrintJobStatus.printing)),
+                label: const Text('Printing'),
+                selected: filter == PrintJobStatus.printing,
+                onSelected: (_) =>
+                    setState(() => filter = PrintJobStatus.printing),
+              ),
               ChoiceChip(
-                  label: const Text('Success'),
-                  selected: filter == PrintJobStatus.success,
-                  onSelected: (_) =>
-                      setState(() => filter = PrintJobStatus.success)),
+                label: const Text('Awaiting ACK'),
+                selected: filter == PrintJobStatus.printed_awaiting_ack,
+                onSelected: (_) => setState(
+                    () => filter = PrintJobStatus.printed_awaiting_ack),
+              ),
               ChoiceChip(
-                  label: const Text('Failed'),
-                  selected: filter == PrintJobStatus.failed,
-                  onSelected: (_) =>
-                      setState(() => filter = PrintJobStatus.failed)),
+                label: const Text('Success'),
+                selected: filter == PrintJobStatus.success,
+                onSelected: (_) =>
+                    setState(() => filter = PrintJobStatus.success),
+              ),
+              ChoiceChip(
+                label: const Text('Failed'),
+                selected: filter == PrintJobStatus.failed,
+                onSelected: (_) =>
+                    setState(() => filter = PrintJobStatus.failed),
+              ),
             ],
           ),
           const SizedBox(height: 12),
+          if (st.queuePaused) ...[
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.report_problem,
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        st.queuePauseReason ??
+                            'Queue paused. Check printer and resume.',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    FilledButton(
+                      onPressed: () => ctrl.resumeQueue(),
+                      child: const Text('Resume'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (jobs.isEmpty)
             const Center(
-                child: Padding(
-                    padding: EdgeInsets.all(32), child: Text('No jobs'))),
+              child: Padding(
+                padding: EdgeInsets.all(32),
+                child: Text('No jobs'),
+              ),
+            ),
           for (final j in jobs) _jobCard(context, j, ctrl),
           const SizedBox(height: 20),
           _deadLetterSection(context, ctrl),
         ],
       ),
     );
+  }
+
+  Future<void> _confirmClearQueue(
+      BuildContext context, AppController ctrl) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Clear queue?'),
+        content: const Text(
+            'This removes all visible queued jobs from this device. Use this only after confirming no pending print is needed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Clear'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) await ctrl.clearQueue();
   }
 
   Widget _deadLetterSection(BuildContext context, AppController ctrl) {
@@ -98,7 +171,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                       tooltip: 'Refresh dead-letter list',
                       icon: const Icon(Icons.refresh),
                       onPressed: () => setState(() {}),
-                    )
+                    ),
                   ],
                 ),
                 if (snapshot.connectionState == ConnectionState.waiting)
@@ -122,7 +195,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                     return ListTile(
                       dense: true,
                       contentPadding: const EdgeInsets.symmetric(horizontal: 0),
-                      title: Text('Job #$id • Order #$orderId'),
+                      title: Text('Job #$id - Order #$orderId'),
                       subtitle: Text('Reason: $reason\nFailed at: $failedAt'),
                       trailing: IconButton(
                         tooltip: 'Requeue this dead-letter job',
@@ -146,48 +219,154 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
 
   Widget _jobCard(BuildContext context, PrintJob j, AppController ctrl) {
     final cs = Theme.of(context).colorScheme;
-    Color? color;
-    switch (j.status) {
-      case PrintJobStatus.pending:
-        color = cs.secondary;
-        break;
-      case PrintJobStatus.printing:
-        color = cs.primary;
-        break;
-      case PrintJobStatus.printed_awaiting_ack:
-        color = cs.primaryContainer;
-        break;
-      case PrintJobStatus.success:
-        color = cs.tertiary;
-        break;
-      case PrintJobStatus.failed:
-        color = cs.error;
-        break;
-      case PrintJobStatus.cancelled:
-        color = cs.outline;
-        break;
-    }
+    final color = _statusColor(context, j.status);
+    final isRefill = j.printType.toUpperCase() == 'REFILL';
+    final tableName =
+        (j.payload['tablename'] ?? j.payload['table_name'] ?? 'No table')
+            .toString();
+    final orderNumber =
+        (j.payload['order_number'] ?? j.payload['orderNumber'] ?? j.orderId)
+            .toString();
+    final items = (j.payload['items'] as List?) ?? const [];
+    final itemPreview = _itemPreview(j);
 
     return Card(
-      child: ListTile(
-        title: Text('Job #${j.printEventId} • Order #${j.orderId}'),
-        subtitle: Text(
-            '${j.printType}${j.refillNumber != null ? ' #${j.refillNumber}' : ''} • Retries: ${j.retryCount}${j.lastError != null ? '\n${j.lastError}' : ''}'),
-        leading: Icon(Icons.circle, color: color),
-        trailing: Wrap(
-          spacing: 8,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (j.status == PrintJobStatus.failed)
-              IconButton(
-                  icon: const Icon(Icons.refresh),
-                  onPressed: () => ctrl.retryJob(j.printEventId)),
-            if (j.status == PrintJobStatus.pending)
-              IconButton(
-                  icon: const Icon(Icons.cancel),
-                  onPressed: () => ctrl.cancelJob(j.printEventId)),
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(Icons.circle, color: color, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Text(
+                        'Table $tableName',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                      _badge(
+                        isRefill
+                            ? 'REFILL${j.refillNumber != null ? ' #${j.refillNumber}' : ''}'
+                            : 'INITIAL',
+                        isRefill ? cs.error : cs.primary,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Order #$orderNumber - ${items.length} item(s)'),
+                  if (itemPreview.isNotEmpty)
+                    Text(
+                      itemPreview,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: cs.onSurfaceVariant),
+                    ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_prettyStatus(j.status)} - Job #${j.printEventId} - Retries: ${j.retryCount}',
+                    style: TextStyle(fontSize: 12, color: cs.outline),
+                  ),
+                  if (j.lastError != null)
+                    Text(
+                      j.lastError!,
+                      style: TextStyle(color: cs.error, fontSize: 12),
+                    ),
+                ],
+              ),
+            ),
+            Wrap(
+              spacing: 4,
+              children: [
+                if (j.status == PrintJobStatus.failed)
+                  IconButton(
+                    tooltip: 'Retry',
+                    icon: const Icon(Icons.refresh),
+                    onPressed: () => ctrl.retryJob(j.printEventId),
+                  ),
+                if (j.status == PrintJobStatus.pending)
+                  IconButton(
+                    tooltip: 'Cancel',
+                    icon: const Icon(Icons.cancel),
+                    onPressed: () => ctrl.cancelJob(j.printEventId),
+                  ),
+              ],
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Color _statusColor(BuildContext context, PrintJobStatus status) {
+    final cs = Theme.of(context).colorScheme;
+    switch (status) {
+      case PrintJobStatus.pending:
+        return cs.secondary;
+      case PrintJobStatus.printing:
+        return cs.primary;
+      case PrintJobStatus.printed_awaiting_ack:
+        return cs.primaryContainer;
+      case PrintJobStatus.success:
+        return cs.tertiary;
+      case PrintJobStatus.failed:
+        return cs.error;
+      case PrintJobStatus.cancelled:
+        return cs.outline;
+    }
+  }
+
+  Widget _badge(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withAlpha(45),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withAlpha(150)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: FontWeight.w700,
+          fontSize: 11,
+        ),
+      ),
+    );
+  }
+
+  String _prettyStatus(PrintJobStatus status) {
+    return status.name
+        .split('_')
+        .map((s) => s.isEmpty ? s : '${s[0].toUpperCase()}${s.substring(1)}')
+        .join(' ');
+  }
+
+  String _itemPreview(PrintJob job) {
+    final rawItems = (job.payload['items'] as List?) ?? const [];
+    final isRefill = job.printType.toUpperCase() == 'REFILL';
+    final visibleItems = isRefill
+        ? rawItems
+        : (rawItems.length > 1 ? rawItems.sublist(1) : rawItems);
+    final names = visibleItems.take(3).map((item) {
+      final map = Map<String, dynamic>.from(item as Map);
+      final qty = map['quantity'] ?? 1;
+      final name = (map['name'] ?? 'Unnamed item').toString();
+      return '${qty}x $name';
+    }).toList();
+    final extra = visibleItems.length > names.length
+        ? ' +${visibleItems.length - names.length} more'
+        : '';
+    return '${names.join(', ')}$extra';
   }
 }

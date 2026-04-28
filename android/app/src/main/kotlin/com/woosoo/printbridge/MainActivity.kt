@@ -1,4 +1,4 @@
-package com.example.woosoo_relay_device
+package com.woosoo.printbridge
 
 import io.flutter.embedding.android.FlutterActivity
 

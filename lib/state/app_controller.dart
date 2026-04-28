@@ -109,6 +109,8 @@ class AppController extends StateNotifier<AppState> {
           historicalLastReconnectAttempt: null,
           historicalLastJobTime: null,
           metricsTrackingSince: null,
+          queuePaused: false,
+          queuePauseReason: null,
         ));
 
   Duration get uptime => DateTime.now().toUtc().difference(_bootedAt);
@@ -170,7 +172,8 @@ class AppController extends StateNotifier<AppState> {
     }
 
     // Cold-start: fetch broadcasting config from server if Reverb key is empty
-    if (state.config.reverbAppKey.isEmpty && state.config.apiBaseUrl.isNotEmpty) {
+    if (state.config.reverbAppKey.isEmpty &&
+        state.config.apiBaseUrl.isNotEmpty) {
       log.i('STEP 0: Fetching broadcast config (cold-start, no cached key)');
       await _fetchBroadcastConfig();
     }
@@ -339,19 +342,23 @@ class AppController extends StateNotifier<AppState> {
       // Extract Reverb app key from broadcasting config if available
       String reverbAppKey = cfg.reverbAppKey;
       final broadcasting = response['broadcasting'] as Map<String, dynamic>?;
-      if (broadcasting != null && (broadcasting['key'] ?? '').toString().isNotEmpty) {
+      if (broadcasting != null &&
+          (broadcasting['key'] ?? '').toString().isNotEmpty) {
         reverbAppKey = broadcasting['key'].toString();
         log.i('Received Reverb app key from server');
       }
 
-      final next = cfg.copyWith(
-        deviceId: deviceId,
-        authToken: authToken,
-        reverbAppKey: reverbAppKey,
-        printerName: (device['printer_name'] ?? cfg.printerName)?.toString(),
-        printerAddress:
-            (device['bluetooth_address'] ?? cfg.printerAddress)?.toString(),
-      ).withDerivedWsUrl();
+      final next = cfg
+          .copyWith(
+            deviceId: deviceId,
+            authToken: authToken,
+            reverbAppKey: reverbAppKey,
+            printerName:
+                (device['printer_name'] ?? cfg.printerName)?.toString(),
+            printerAddress:
+                (device['bluetooth_address'] ?? cfg.printerAddress)?.toString(),
+          )
+          .withDerivedWsUrl();
 
       await _saveConfig(next);
       state = state.copyWith(config: next);
@@ -368,7 +375,8 @@ class AppController extends StateNotifier<AppState> {
   /// Used on cold-start when no Reverb key is cached yet.
   Future<void> _fetchBroadcastConfig() async {
     try {
-      final res = await ref.read(apiProvider).fetchConfig(state.config.apiBaseUrl);
+      final res =
+          await ref.read(apiProvider).fetchConfig(state.config.apiBaseUrl);
       if (res == null) {
         log.w('Cold-start config fetch returned null');
         return;
@@ -428,6 +436,11 @@ class AppController extends StateNotifier<AppState> {
       onError: (msg) => state = state.copyWith(lastWsError: msg),
     );
     _ws!.connect(state.config.wsUrl);
+  }
+
+  Future<void> restartWebSocket() async {
+    log.i('Manual WebSocket restart requested');
+    _startWs();
   }
 
   Future<void> _startPolling() async {
@@ -541,15 +554,20 @@ class AppController extends StateNotifier<AppState> {
           'last_print_event_id': last?.printEventId,
           'last_printed_order_id': last?.orderId,
           'timestamp': now.toIso8601String(),
-          'status': {
-            'printer_connected': state.printer.connected,
-            'queue_pending': state.pendingCount,
-            'queue_failed': state.failedCount,
-          }
+          'status': _heartbeatStatus(),
         };
       },
     );
     _hb!.start(state.config, interval: AppConstants.heartbeatInterval);
+  }
+
+  String _heartbeatStatus() {
+    if (state.failedCount > 0) return 'queue_failed';
+    if (state.pendingCount > 0 || awaitingAckCount > 0 || state.queuePaused) {
+      return 'queue_pending';
+    }
+    if (state.printer.connected) return 'printer_connected';
+    return 'online';
   }
 
   void _startQueueProcessor() {
@@ -738,6 +756,35 @@ class AppController extends StateNotifier<AppState> {
     state = state.copyWith(queue: await store.all());
   }
 
+  void pauseQueueForPrinterAttention(String reason) {
+    log.w('Queue paused: $reason');
+    state = state.copyWith(
+      queuePaused: true,
+      queuePauseReason: reason,
+      lastError: reason,
+    );
+  }
+
+  Future<void> resumeQueue() async {
+    final printer = ref.read(printerServiceProvider);
+    final connected = await printer.isConnected();
+    if (!connected && (state.config.printerAddress ?? '').isNotEmpty) {
+      await connectPrinterByAddress(
+        state.config.printerAddress!,
+        name: state.config.printerName,
+      );
+    }
+
+    final ready = await printer.isConnected();
+    state = state.copyWith(
+      queuePaused: !ready,
+      queuePauseReason: ready ? null : 'Printer is not connected.',
+      lastError: ready ? null : 'Printer is not connected.',
+      printer: state.printer.copyWith(connected: ready),
+    );
+    if (ready) log.i('Queue resumed');
+  }
+
   Future<void> cancelJob(int printEventId) async {
     final store = ref.read(queueStoreProvider);
     await store.updateJob(
@@ -833,6 +880,8 @@ class AppController extends StateNotifier<AppState> {
     // M3.5-1: This lock is SHARED with flushPendingAcks() to prevent state collision.
     await _jobStateLock.synchronized(() async {
       try {
+        if (state.queuePaused) return;
+
         final printer = ref.read(printerServiceProvider);
         final isConnected = await printer.isConnected();
 
@@ -933,8 +982,22 @@ class AppController extends StateNotifier<AppState> {
             (old) => old.copyWith(status: PrintJobStatus.printing));
         state = state.copyWith(queue: await store.all());
 
+        final wasConnectedBeforePrint = await printer.isConnected();
         final okPrint = await printer.printLines(receipt.build(next.payload));
         if (!okPrint) {
+          if (wasConnectedBeforePrint) {
+            await store.updateJob(
+                next.printEventId,
+                (old) => old.copyWith(
+                      status: PrintJobStatus.pending,
+                      lastError:
+                          'Printer needs attention. Check paper and resume queue.',
+                    ));
+            pauseQueueForPrinterAttention(
+                'Printer needs attention. Check paper and resume queue.');
+            state = state.copyWith(queue: await store.all());
+            return;
+          }
           await _handlePrintFailure(next, 'Print command failed');
           return;
         }
@@ -1185,15 +1248,15 @@ class AppController extends StateNotifier<AppState> {
   /// Register this device with the backend using a one-time code.
   /// On success saves the returned auth token + device ID and reconnects.
   /// Returns null on success, or an error message string on failure.
-  Future<String?> registerDevice(
-      {required String code}) async {
+  Future<String?> registerDevice({required String code}) async {
     final apiBaseUrl = state.config.apiBaseUrl;
     log.i('Registering device with setup code: apiBaseUrl=$apiBaseUrl');
 
     Map<String, dynamic>? res;
     try {
-      res = await ref.read(apiProvider).registerDevice(apiBaseUrl,
-          code: code, appVersion: '1.0.0+1');
+      res = await ref
+          .read(apiProvider)
+          .registerDevice(apiBaseUrl, code: code, appVersion: '1.0.0+1');
     } catch (e) {
       log.e('registerDevice exception: $e');
       return 'Network error: $e';
@@ -1220,12 +1283,16 @@ class AppController extends StateNotifier<AppState> {
     // Extract Reverb app key from broadcasting config if available
     String reverbAppKey = state.config.reverbAppKey;
     final broadcasting = res['broadcasting'] as Map<String, dynamic>?;
-    if (broadcasting != null && (broadcasting['key'] ?? '').toString().isNotEmpty) {
+    if (broadcasting != null &&
+        (broadcasting['key'] ?? '').toString().isNotEmpty) {
       reverbAppKey = broadcasting['key'].toString();
       log.i('Received Reverb app key from registration response');
     }
 
-    final next = state.config.copyWith(authToken: token, deviceId: deviceId, reverbAppKey: reverbAppKey).withDerivedWsUrl();
+    final next = state.config
+        .copyWith(
+            authToken: token, deviceId: deviceId, reverbAppKey: reverbAppKey)
+        .withDerivedWsUrl();
     await _saveConfig(next);
     state = state.copyWith(config: next);
     log.i('✅ Device registered: device_id=$deviceId');

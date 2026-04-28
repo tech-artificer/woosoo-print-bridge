@@ -1,6 +1,8 @@
 import '../models/device_config.dart';
 import '../models/print_job.dart';
 
+const _unset = Object();
+
 class PrinterStatus {
   final bool connected;
   final String? name;
@@ -51,6 +53,8 @@ class AppState {
   // Preserved across unrelated state updates (uses ?? this.field in copyWith).
   final String? lastPollError;
   final String? lastWsError;
+  final bool queuePaused;
+  final String? queuePauseReason;
 
   const AppState({
     required this.initialized,
@@ -74,6 +78,8 @@ class AppState {
     required this.metricsTrackingSince,
     this.lastPollError,
     this.lastWsError,
+    this.queuePaused = false,
+    this.queuePauseReason,
   });
 
   int get pendingCount =>
@@ -92,7 +98,7 @@ class AppState {
     PrinterStatus? printer,
     List<PrintJob>? queue,
     int? sessionId,
-    String? lastError,
+    Object? lastError = _unset,
     bool? wsConnected,
     bool? networkConnected,
     int? historicalTotalJobs,
@@ -105,6 +111,8 @@ class AppState {
     DateTime? metricsTrackingSince,
     String? lastPollError,
     String? lastWsError,
+    bool? queuePaused,
+    Object? queuePauseReason = _unset,
   }) =>
       AppState(
         initialized: initialized ?? this.initialized,
@@ -115,7 +123,7 @@ class AppState {
         printer: printer ?? this.printer,
         queue: queue ?? this.queue,
         sessionId: sessionId ?? this.sessionId,
-        lastError: lastError,
+        lastError: lastError == _unset ? this.lastError : lastError as String?,
         wsConnected: wsConnected ?? this.wsConnected,
         networkConnected: networkConnected ?? this.networkConnected,
         historicalTotalJobs: historicalTotalJobs ?? this.historicalTotalJobs,
@@ -134,5 +142,9 @@ class AppState {
         metricsTrackingSince: metricsTrackingSince ?? this.metricsTrackingSince,
         lastPollError: lastPollError ?? this.lastPollError,
         lastWsError: lastWsError ?? this.lastWsError,
+        queuePaused: queuePaused ?? this.queuePaused,
+        queuePauseReason: queuePauseReason == _unset
+            ? this.queuePauseReason
+            : queuePauseReason as String?,
       );
 }
