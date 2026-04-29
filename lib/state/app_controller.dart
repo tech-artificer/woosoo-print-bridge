@@ -302,6 +302,28 @@ class AppController extends StateNotifier<AppState> {
     await _savePersistedMetrics();
   }
 
+  /// Returns the device's own LAN IPv4 address (e.g. "192.168.100.46").
+  /// Used when calling registration and lookup-by-ip endpoints so the server
+  /// stores the real device IP rather than the Docker bridge gateway (172.18.0.1).
+  /// Returns null if the IP cannot be determined (no-op fallback).
+  Future<String?> _getDeviceLanIp() async {
+    try {
+      final interfaces = await NetworkInterface.list(
+          type: InternetAddressType.IPv4, includeLinkLocal: false);
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            log.i('Detected LAN IP: ${addr.address} (${iface.name})');
+            return addr.address;
+          }
+        }
+      }
+    } catch (e) {
+      log.w('Could not detect LAN IP: $e');
+    }
+    return null;
+  }
+
   Future<void> _ensureDeviceAuth() async {
     final cfg = state.config;
     if ((cfg.authToken ?? '').isNotEmpty && (cfg.deviceId ?? '').isNotEmpty) {
@@ -310,9 +332,12 @@ class AppController extends StateNotifier<AppState> {
 
     state = state.copyWith(authenticating: true);
     try {
-      log.i('Attempting device lookup by IP from ${cfg.apiBaseUrl}');
-      final response =
-          await ref.read(apiProvider).lookupDeviceByIp(cfg.apiBaseUrl);
+      final detectedIp = await _getDeviceLanIp();
+      log.i(
+          'Attempting device lookup by IP from ${cfg.apiBaseUrl} (detectedIp=$detectedIp)');
+      final response = await ref
+          .read(apiProvider)
+          .lookupDeviceByIp(cfg.apiBaseUrl, ipAddress: detectedIp);
       if (response == null) {
         log.w(
             'Device lookup returned null - device not registered or API failed');
@@ -444,16 +469,14 @@ class AppController extends StateNotifier<AppState> {
   }
 
   Future<void> _startPolling() async {
-    final sessionId = state.sessionId;
+    // Printer relays must consume every unacknowledged branch print event.
+    // Passing a POS/tablet session_id here narrows the server query and can
+    // hide valid jobs when the latest-session endpoint resolves a different
+    // session than the order was created under.
+    const int? sessionId = null;
     log.i('Attempting to start polling service...');
-    log.i('Session ID: ${sessionId ?? "NULL"}');
-
-    if (sessionId == null) {
-      log.w('⚠️ POLLING NOT STARTED: Session ID is null');
-      log.w(
-          'Polling requires an active table session. WebSocket will handle print events.');
-      return;
-    }
+    log.i(
+        'Session ID: ${sessionId ?? "NULL (printer-relay: polling all branch events)"}');
 
     log.i('Creating polling service...');
     _polling?.stop();
@@ -469,7 +492,7 @@ class AppController extends StateNotifier<AppState> {
       },
     );
     log.i(
-        'Starting polling with interval: ${AppConstants.pollingInterval.inSeconds}s');
+        'Starting polling with interval: ${AppConstants.pollingInterval.inSeconds}s (sessionId=${sessionId ?? "none"})');
     await _polling!.start(state.config,
         sessionId: sessionId, interval: AppConstants.pollingInterval);
     log.i('✅ Polling service started successfully');
@@ -616,17 +639,14 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
 
-    // C4: Device_id filtering to reject cross-device events.
-    final myDeviceId = state.config.deviceId ?? '';
-    if (myDeviceId.isNotEmpty &&
-        deviceId.isNotEmpty &&
-        deviceId != myDeviceId) {
-      log.w(
-          'Cross-device event rejected: print_event_id=$printEventId deviceId=$deviceId (mine=$myDeviceId)');
-      return;
-    } else if (myDeviceId.isEmpty) {
-      log.w(
-          'Device ID not configured - accepting event anyway (EMERGENCY MODE)');
+    // C4 NOTE: Cross-device filter intentionally removed for printer-relay operation.
+    // The admin.print channel broadcasts ALL orders from ALL tablets to ALL printers.
+    // The `device_id` in the payload is the ORIGINATING tablet's ID — it is NOT a
+    // target/routing field. Filtering by it would cause the printer to reject every
+    // order placed by a tablet (since tablet ID ≠ printer ID).
+    // Branch-level scoping is enforced server-side in the polling endpoint.
+    if ((state.config.deviceId ?? '').isEmpty) {
+      log.w('Device ID not configured — accepting event (EMERGENCY MODE)');
     }
 
     final oId = orderId is int ? orderId : int.tryParse(orderId.toString());
@@ -639,12 +659,6 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
 
-    final store = ref.read(queueStoreProvider);
-    if (await store.exists(printEventId)) {
-      log.d('Duplicate print_event_id=$printEventId ignored');
-      return;
-    }
-
     final printType =
         (payload['print_type'] ?? payload['printType'] ?? 'INITIAL')
             .toString()
@@ -653,6 +667,60 @@ class AppController extends StateNotifier<AppState> {
     final refillNo = refill == null
         ? null
         : (refill is int ? refill : int.tryParse(refill.toString()));
+
+    final store = ref.read(queueStoreProvider);
+    final existing = await store.get(printEventId);
+    if (existing != null) {
+      final stalePrinting = existing.status == PrintJobStatus.printing &&
+          DateTime.now().toUtc().difference(existing.createdAt) >
+              const Duration(minutes: 2);
+      final shouldRequeue = existing.status == PrintJobStatus.failed ||
+          existing.status == PrintJobStatus.cancelled ||
+          stalePrinting;
+
+      if (shouldRequeue) {
+        await store.upsert(PrintJob(
+          printEventId: printEventId,
+          deviceId: deviceId,
+          orderId: oId,
+          sessionId: sId,
+          printType: printType,
+          refillNumber: refillNo,
+          payload: payload,
+          status: PrintJobStatus.pending,
+          retryCount: 0,
+          lastError: null,
+          createdAt: existing.createdAt,
+          printedAt: null,
+          ackAttempts: 0,
+          lastAckAttempt: null,
+        ));
+        state = state.copyWith(queue: await store.all());
+        log.i(
+            'Requeued duplicate unacknowledged print_event_id=$printEventId from local status=${existing.status.name}');
+        return;
+      }
+
+      if (existing.status == PrintJobStatus.success) {
+        await store.updateJob(
+          printEventId,
+          (old) => old.copyWith(
+            status: PrintJobStatus.printed_awaiting_ack,
+            ackAttempts: 0,
+            lastAckAttempt: null,
+            lastError: null,
+          ),
+        );
+        state = state.copyWith(queue: await store.all());
+        log.w(
+            'Server still reports print_event_id=$printEventId unacknowledged; queued ACK retry from local success state');
+        return;
+      }
+
+      log.d(
+          'Duplicate print_event_id=$printEventId ignored (local status=${existing.status.name})');
+      return;
+    }
 
     final job = PrintJob(
       printEventId: printEventId,
@@ -873,21 +941,161 @@ class AppController extends StateNotifier<AppState> {
     log.i('✅ Force poll complete');
   }
 
+  Future<void> processQueueOnce() => _processQueue();
+
+  Future<void> forcePrintJob(int printEventId) async {
+    final store = ref.read(queueStoreProvider);
+    final job = await store.get(printEventId);
+    if (job == null) {
+      throw StateError('Print job #$printEventId was not found.');
+    }
+
+    await _printJobNow(job, acknowledge: job.status != PrintJobStatus.success);
+  }
+
+  Future<void> _printJobNow(
+    PrintJob job, {
+    required bool acknowledge,
+  }) async {
+    final store = ref.read(queueStoreProvider);
+    final printer = ref.read(printerServiceProvider);
+
+    if (!await printer.isConnected() &&
+        (state.config.printerAddress ?? '').isNotEmpty) {
+      await connectPrinterByAddress(
+        state.config.printerAddress!,
+        name: state.config.printerName,
+      );
+    }
+
+    if (!await printer.isConnected()) {
+      final message = 'Printer is not connected.';
+      state = state.copyWith(lastError: message);
+      throw StateError(message);
+    }
+
+    final List<String> receiptLines;
+    try {
+      receiptLines = receipt.build(job.payload);
+    } catch (e) {
+      if (acknowledge) {
+        await _handlePrintFailure(job, 'Receipt build failed: $e');
+      }
+      rethrow;
+    }
+
+    if (acknowledge) {
+      await store.updateJob(
+        job.printEventId,
+        (old) => old.copyWith(
+          status: PrintJobStatus.printing,
+          lastError: null,
+        ),
+      );
+      state = state.copyWith(queue: await store.all());
+    }
+
+    final okPrint = await printer.printLines(receiptLines);
+    if (!okPrint) {
+      if (acknowledge) {
+        await _handlePrintFailure(job, 'Manual print command failed');
+      }
+      final message = 'Manual print command failed';
+      state = state.copyWith(lastError: message);
+      throw StateError(message);
+    }
+
+    await printer.cut();
+
+    if (!acknowledge) {
+      log.i(
+          'Manual reprint complete without ACK for print_event_id=${job.printEventId}');
+      return;
+    }
+
+    final printedAt = DateTime.now().toUtc();
+    await store.updateJob(
+      job.printEventId,
+      (old) => old.copyWith(
+        status: PrintJobStatus.printed_awaiting_ack,
+        printedAt: printedAt,
+        lastError: null,
+        ackAttempts: 0,
+        lastAckAttempt: printedAt,
+      ),
+    );
+
+    final ackOk = await ref.read(apiProvider).markPrintEventPrinted(
+          state.config,
+          job.printEventId,
+          token: state.config.authToken ?? '',
+          printedAt: printedAt,
+          printerId: state.config.printerId,
+          printerName: state.config.printerName,
+          bluetoothAddress: state.config.printerAddress,
+          appVersion: '1.0.0+1',
+        );
+
+    if (ackOk) {
+      await store.updateJob(
+        job.printEventId,
+        (old) => old.copyWith(status: PrintJobStatus.success, lastError: null),
+      );
+      await _recordJobSuccess(printedAt);
+    } else {
+      await store.updateJob(
+        job.printEventId,
+        (old) => old.copyWith(lastError: 'ACK failed, queued for retry'),
+      );
+    }
+
+    state = state.copyWith(queue: await store.all());
+  }
+
+  Future<void> _recoverStalePrintingJobs(QueueStore store) async {
+    final now = DateTime.now().toUtc();
+    final jobs = await store.all();
+    final staleJobs = jobs
+        .where((job) =>
+            job.status == PrintJobStatus.printing &&
+            now.difference(job.createdAt) > const Duration(minutes: 2))
+        .toList();
+
+    for (final job in staleJobs) {
+      log.w('Recovering stale printing job print_event_id=${job.printEventId}');
+      await store.updateJob(
+        job.printEventId,
+        (old) => old.copyWith(
+          status: PrintJobStatus.pending,
+          retryCount: old.retryCount + 1,
+          lastError: 'Recovered stale printing job',
+        ),
+      );
+    }
+
+    if (staleJobs.isNotEmpty) {
+      state = state.copyWith(queue: await store.all());
+    }
+  }
+
   Future<void> _processQueue() async {
     // P3-RELX-1: Single-worker print engine (Gate 1)
     // The _jobStateLock mutex ensures only ONE job can be in 'printing' state at any time.
     // No parallel print operations are possible; jobs are processed sequentially.
     // M3.5-1: This lock is SHARED with flushPendingAcks() to prevent state collision.
     await _jobStateLock.synchronized(() async {
+      PrintJob? activeJob;
       try {
         if (state.queuePaused) return;
+
+        final store = ref.read(queueStoreProvider);
+        await _recoverStalePrintingJobs(store);
 
         final printer = ref.read(printerServiceProvider);
         final isConnected = await printer.isConnected();
 
         if (!isConnected && (state.config.printerAddress ?? '').isNotEmpty) {
           // M3.5-3: Check printer reconnect backoff before attempting reconnection
-          final store = ref.read(queueStoreProvider);
           final jobs = await store.all();
           final pendingJobs =
               jobs.where((j) => j.status == PrintJobStatus.pending).toList();
@@ -969,7 +1177,6 @@ class AppController extends StateNotifier<AppState> {
 
         if (!connected) return;
 
-        final store = ref.read(queueStoreProvider);
         final jobs = await store.all();
         final next =
             jobs.where((j) => j.status == PrintJobStatus.pending).isEmpty
@@ -977,13 +1184,22 @@ class AppController extends StateNotifier<AppState> {
                 : jobs.where((j) => j.status == PrintJobStatus.pending).first;
 
         if (next == null) return;
+        activeJob = next;
 
         await store.updateJob(next.printEventId,
             (old) => old.copyWith(status: PrintJobStatus.printing));
         state = state.copyWith(queue: await store.all());
 
         final wasConnectedBeforePrint = await printer.isConnected();
-        final okPrint = await printer.printLines(receipt.build(next.payload));
+        final List<String> receiptLines;
+        try {
+          receiptLines = receipt.build(next.payload);
+        } catch (e) {
+          await _handlePrintFailure(next, 'Receipt build failed: $e');
+          return;
+        }
+
+        final okPrint = await printer.printLines(receiptLines);
         if (!okPrint) {
           if (wasConnectedBeforePrint) {
             await store.updateJob(
@@ -1041,6 +1257,16 @@ class AppController extends StateNotifier<AppState> {
         }
         state = state.copyWith(queue: await store.all());
       } catch (e) {
+        if (activeJob != null) {
+          try {
+            await _handlePrintFailure(activeJob, 'Queue error: $e');
+          } catch (failureError) {
+            state = state.copyWith(
+                lastError:
+                    'Queue error: $e; failed to update job state: $failureError');
+            return;
+          }
+        }
         state = state.copyWith(lastError: 'Queue error: $e');
       }
     });
@@ -1254,9 +1480,10 @@ class AppController extends StateNotifier<AppState> {
 
     Map<String, dynamic>? res;
     try {
-      res = await ref
-          .read(apiProvider)
-          .registerDevice(apiBaseUrl, code: code, appVersion: '1.0.0+1');
+      final ipAddress = await _getDeviceLanIp();
+      log.i('Registering with detectedIp=$ipAddress');
+      res = await ref.read(apiProvider).registerDevice(apiBaseUrl,
+          code: code, appVersion: '1.0.0+1', ipAddress: ipAddress);
     } catch (e) {
       log.e('registerDevice exception: $e');
       return 'Network error: $e';
@@ -1291,7 +1518,10 @@ class AppController extends StateNotifier<AppState> {
 
     final next = state.config
         .copyWith(
-            authToken: token, deviceId: deviceId, reverbAppKey: reverbAppKey)
+            authToken: token,
+            deviceId: deviceId,
+            reverbAppKey: reverbAppKey,
+            registrationCode: code)
         .withDerivedWsUrl();
     await _saveConfig(next);
     state = state.copyWith(config: next);
@@ -1332,6 +1562,7 @@ class AppController extends StateNotifier<AppState> {
       printerName: sp.getString('printerName'),
       printerAddress: sp.getString('printerAddress'),
       printerId: sp.getString('printerId') ?? 'kitchen-printer-01',
+      registrationCode: sp.getString('registrationCode'),
     );
     state = state.copyWith(config: cfg);
   }
@@ -1350,40 +1581,16 @@ class AppController extends StateNotifier<AppState> {
       await sp.setString('printerAddress', cfg.printerAddress!);
     }
     await sp.setString('printerId', cfg.printerId);
+    if (cfg.registrationCode != null) {
+      await sp.setString('registrationCode', cfg.registrationCode!);
+    }
   }
 
-  /// Reprint an order by creating a new print job with the same payload
+  /// Reprint an order immediately without ACKing or mutating the original job.
   Future<void> reprintOrder(PrintJob original) async {
     log.i(
         'Reprint requested for order_id=${original.orderId}, print_event_id=${original.printEventId}');
-
-    final store = ref.read(queueStoreProvider);
-
-    // Create a new print job with a unique ID (use negative IDs for reprints to avoid conflicts)
-    final reprintId = -(DateTime.now().millisecondsSinceEpoch);
-
-    final reprintJob = PrintJob(
-      printEventId: reprintId,
-      deviceId: original.deviceId,
-      orderId: original.orderId,
-      sessionId: original.sessionId,
-      printType: '${original.printType}-REPRINT',
-      refillNumber: original.refillNumber,
-      payload: original.payload,
-      status: PrintJobStatus.pending,
-      retryCount: 0,
-      lastError: null,
-      createdAt: DateTime.now().toUtc(),
-      printedAt: null,
-      ackAttempts: 0,
-      lastAckAttempt: null,
-    );
-
-    await store.upsert(reprintJob);
-    state = state.copyWith(queue: await store.all());
-
-    log.i(
-        'Reprint job created with temp ID=$reprintId for order_id=${original.orderId}');
+    await _printJobNow(original, acknowledge: false);
   }
 
   @override

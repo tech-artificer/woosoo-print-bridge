@@ -73,4 +73,46 @@ void main() {
 
     expect(response?['session']['id'], 42);
   });
+
+  test(
+      'getUnprintedPrintEvents omits session_id when polling all branch events',
+      () async {
+    final client = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.path, '/api/printer/unprinted-events');
+      expect(request.url.queryParameters.containsKey('session_id'), isFalse);
+      expect(request.url.queryParameters['limit'], '50');
+      expect(request.headers['Authorization'], 'Bearer device-token');
+
+      return http.Response(
+        jsonEncode({
+          'success': true,
+          'count': 1,
+          'events': [
+            {'print_event_id': 11, 'order_id': 22}
+          ],
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+
+    final api = ApiService(LoggerService(), client: client);
+    final events = await api.getUnprintedPrintEvents(
+      const DeviceConfig(
+        apiBaseUrl: 'https://192.168.100.7',
+        wsUrl: 'wss://192.168.100.7/app/key',
+        deviceId: '7',
+        authToken: 'device-token',
+        printerName: null,
+        printerAddress: null,
+        printerId: 'kitchen-printer-01',
+      ),
+      token: 'device-token',
+      sessionId: null,
+    );
+
+    expect(events, hasLength(1));
+    expect(events.single['print_event_id'], 11);
+  });
 }

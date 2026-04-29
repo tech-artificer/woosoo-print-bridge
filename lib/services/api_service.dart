@@ -42,6 +42,12 @@ class ApiService {
     _client = IOClient(httpClient);
   }
 
+  String _toSqlDateTimeUtc(DateTime dt) {
+    final u = dt.toUtc();
+    String two(int v) => v.toString().padLeft(2, '0');
+    return '${u.year}-${two(u.month)}-${two(u.day)} ${two(u.hour)}:${two(u.minute)}:${two(u.second)}';
+  }
+
   Future<T> _retry<T>(Future<T> Function() fn, {String op = 'API'}) async {
     int attempt = 0;
     while (true) {
@@ -80,10 +86,19 @@ class ApiService {
 
   /// Returns the full response body (includes `device` + `broadcasting`).
   /// Returns null on network failure or non-200 status.
-  Future<Map<String, dynamic>?> lookupDeviceByIp(String apiBaseUrl) async {
+  /// [ipAddress] — the device's own LAN IP. When provided it is sent as
+  /// `?ip_address=<ip>` so the server can trust the client-supplied value
+  /// (requires DEVICE_ALLOW_CLIENT_SUPPLIED_IP=true on the backend).
+  /// This is necessary in Docker-on-Windows where all requests arrive at the
+  /// nginx container from the Docker bridge gateway (172.18.0.1), not from
+  /// the real LAN IP.
+  Future<Map<String, dynamic>?> lookupDeviceByIp(String apiBaseUrl,
+      {String? ipAddress}) async {
     return _retry(() async {
+      final q = ipAddress != null ? {'ip_address': ipAddress} : null;
       final res = await _client
-          .get(_u(apiBaseUrl, '/api/device/lookup-by-ip'), headers: _headers())
+          .get(_u(apiBaseUrl, '/api/device/lookup-by-ip', q),
+              headers: _headers())
           .timeout(const Duration(seconds: 10));
       if (res.statusCode != 200) return null;
       final j = jsonDecode(res.body) as Map<String, dynamic>;
@@ -117,14 +132,16 @@ class ApiService {
 
   Future<List<Map<String, dynamic>>> getUnprintedPrintEvents(DeviceConfig cfg,
       {required String token,
-      required int sessionId,
+      int? sessionId,
       DateTime? since,
       int limit = 50}) async {
     return _retry(() async {
       final q = {
-        'session_id': '$sessionId',
+        // session_id is optional — when omitted the server returns all unprinted
+        // branch events, which is the correct behaviour for printer-relay devices.
+        if (sessionId != null) 'session_id': '$sessionId',
         'limit': '$limit',
-        if (since != null) 'since': since.toUtc().toIso8601String()
+        if (since != null) 'since': _toSqlDateTimeUtc(since)
       };
       final url = _u(cfg.apiBaseUrl, '/api/printer/unprinted-events', q);
       final res = await _client
@@ -201,12 +218,16 @@ class ApiService {
   /// Register a new device using a one-time registration code.
   /// Returns the full response body on success (contains `token` and `device`),
   /// or a map with `_error: true` on failure.
+  /// [ipAddress] — the device's own LAN IP (detected via NetworkInterface).
+  /// Sent as `ip_address` in the body so the server stores the correct IP
+  /// instead of the Docker bridge gateway address (172.18.0.1).
   Future<Map<String, dynamic>?> registerDevice(String apiBaseUrl,
-      {required String code, String? appVersion}) async {
+      {required String code, String? appVersion, String? ipAddress}) async {
     return _retry(() async {
       final body = jsonEncode({
         'security_code': code,
         if (appVersion != null) 'app_version': appVersion,
+        if (ipAddress != null) 'ip_address': ipAddress,
       });
       final res = await _client
           .post(_u(apiBaseUrl, '/api/devices/register'),

@@ -28,6 +28,15 @@ class ReverbService {
   // Exponential backoff cap: max 60 seconds between reconnect attempts
   static const _reconnectBackoff = [1, 2, 4, 8, 16, 30, 60];
 
+  static String _originFor(String wsUrl) {
+    final uri = Uri.parse(wsUrl);
+    final scheme = uri.scheme == 'wss' ? 'https' : 'http';
+    final defaultPort = scheme == 'https' ? 443 : 80;
+    final port = uri.hasPort && uri.port != defaultPort ? ':${uri.port}' : '';
+
+    return '$scheme://${uri.host}$port';
+  }
+
   ReverbService({
     required this.log,
     required this.onPrintEvent,
@@ -71,6 +80,7 @@ class ReverbService {
 
       final socket = await WebSocket.connect(
         wsUrl,
+        headers: {'Origin': _originFor(wsUrl)},
         customClient: httpClient,
       );
 

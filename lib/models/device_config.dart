@@ -15,6 +15,10 @@ class DeviceConfig {
   /// Stored separately so changing the API host auto-derives a new WS URL.
   final String reverbAppKey;
 
+  /// The last registration/security code used to register this device.
+  /// Persisted so it remains visible after app restarts.
+  final String? registrationCode;
+
   const DeviceConfig({
     required this.apiBaseUrl,
     required this.wsUrl,
@@ -24,6 +28,7 @@ class DeviceConfig {
     required this.printerAddress,
     required this.printerId,
     this.reverbAppKey = AppConstants.defaultReverbAppKey,
+    this.registrationCode,
   });
 
   DeviceConfig copyWith({
@@ -35,6 +40,7 @@ class DeviceConfig {
     String? printerAddress,
     String? printerId,
     String? reverbAppKey,
+    String? registrationCode,
   }) {
     return DeviceConfig(
       apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
@@ -45,6 +51,7 @@ class DeviceConfig {
       printerAddress: printerAddress ?? this.printerAddress,
       printerId: printerId ?? this.printerId,
       reverbAppKey: reverbAppKey ?? this.reverbAppKey,
+      registrationCode: registrationCode ?? this.registrationCode,
     );
   }
 

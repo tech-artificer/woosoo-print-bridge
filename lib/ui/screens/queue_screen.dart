@@ -288,6 +288,13 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             Wrap(
               spacing: 4,
               children: [
+                IconButton(
+                  tooltip: j.status == PrintJobStatus.success
+                      ? 'Reprint without ACK'
+                      : 'Print now',
+                  icon: const Icon(Icons.print),
+                  onPressed: () => _handleManualPrint(context, j, ctrl),
+                ),
                 if (j.status == PrintJobStatus.failed)
                   IconButton(
                     tooltip: 'Retry',
@@ -306,6 +313,37 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _handleManualPrint(
+    BuildContext context,
+    PrintJob job,
+    AppController ctrl,
+  ) async {
+    final isReprint = job.status == PrintJobStatus.success;
+    try {
+      if (isReprint) {
+        await ctrl.reprintOrder(job);
+      } else {
+        await ctrl.forcePrintJob(job.printEventId);
+      }
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(isReprint
+              ? 'Order #${job.orderId} reprinted without ACK'
+              : 'Job #${job.printEventId} printed and ACK queued'),
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Manual print failed: $e'),
+          backgroundColor: Theme.of(context).colorScheme.error,
+        ),
+      );
+    }
   }
 
   Color _statusColor(BuildContext context, PrintJobStatus status) {

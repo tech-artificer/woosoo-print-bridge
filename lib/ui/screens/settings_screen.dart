@@ -22,7 +22,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _derivedWsUrl = '';
 
   // Registration
-  final _regCodeCtl = TextEditingController();
+  late TextEditingController _regCodeCtl;
   bool _registering = false;
   String? _regResult;
   bool _regSuccess = false;
@@ -44,6 +44,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _apiCtl    = TextEditingController(text: st.config.apiBaseUrl);
     _appKeyCtl = TextEditingController(text: st.config.reverbAppKey);
     _printerIdCtl = TextEditingController(text: st.config.printerId);
+    _regCodeCtl = TextEditingController(text: st.config.registrationCode ?? '');
     _derivedWsUrl = AppConstants.deriveWsUrl(st.config.apiBaseUrl, appKey: st.config.reverbAppKey);
 
     // Keep derived WS URL label in sync as user edits
@@ -168,10 +169,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   Icon(Icons.check_circle, color: Theme.of(context).colorScheme.tertiary, size: 16),
                   const SizedBox(width: 6),
                   Expanded(
-                    child: Text(
-                      'Registered — ID: ${st.config.deviceId}',
-                      style: TextStyle(color: Theme.of(context).colorScheme.tertiary, fontSize: 12),
-                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text(
+                        'Registered — ID: ${st.config.deviceId}',
+                        style: TextStyle(color: Theme.of(context).colorScheme.tertiary, fontSize: 12),
+                      ),
+                      if ((st.config.registrationCode ?? '').isNotEmpty)
+                        Text(
+                          'Code: ${st.config.registrationCode}',
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.tertiary.withAlpha(200),
+                            fontSize: 11,
+                          ),
+                        ),
+                    ]),
                   ),
                 ]),
               ),
@@ -285,7 +296,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _registering = false;
       _regSuccess  = error == null;
       _regResult   = error ?? '✓ Registered successfully!';
-      if (error == null) _regCodeCtl.clear();
     });
   }
 
