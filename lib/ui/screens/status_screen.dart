@@ -123,6 +123,34 @@ class StatusScreen extends ConsumerWidget {
                 _kv('Failed', st.failedCount.toString()),
                 _kv('Last Job', lastJobTime?.toIso8601String() ?? '—'),
               ]),
+              const SizedBox(height: 16),
+              _card('Queue Worker', [
+                if (st.pendingCount > 0 &&
+                    _isBlockingQueueReason(st.lastQueueSkipReason))
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Pending jobs blocked - ${st.lastQueueSkipReason}',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                _kv('Last Tick', _formatDate(st.lastQueueTick)),
+                _kv(
+                    'Last Job',
+                    st.lastSelectedPrintEventId == null
+                        ? 'â€”'
+                        : 'print_event_id=${st.lastSelectedPrintEventId}'),
+                _kv('Skip Reason', st.lastQueueSkipReason ?? 'â€”'),
+              ]),
               if ((st.lastError ?? '').isNotEmpty) ...[
                 const SizedBox(height: 16),
                 _card('Last Error', [
@@ -204,6 +232,16 @@ class StatusScreen extends ConsumerWidget {
           ]),
         ),
       );
+
+  String _formatDate(DateTime? dt) => dt == null ? 'â€”' : dt.toIso8601String();
+
+  bool _isBlockingQueueReason(String? reason) => {
+        'queue_paused',
+        'printer_no_address',
+        'printer_disconnected',
+        'printer_reconnect_backoff',
+        'printer_reconnect_max_attempts',
+      }.contains(reason);
 
   Future<void> _connectPrinter(BuildContext context, WidgetRef ref) async {
     final ctrl = ref.read(appControllerProvider.notifier);

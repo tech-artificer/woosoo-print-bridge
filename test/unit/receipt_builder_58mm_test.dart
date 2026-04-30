@@ -34,4 +34,19 @@ void main() {
     expect(lines, contains('1 Rice'));
     expect(lines, contains('2 Side Dish'));
   });
+
+  test('receipt does not print item notes', () {
+    final lines = ReceiptBuilder58mm(width: 32).build({
+      'print_type': 'INITIAL',
+      'tablename': 'A1',
+      'order_number': '1003',
+      'items': [
+        {'name': 'Lunch Set', 'quantity': 1},
+        {'name': 'Kimchi Soup', 'quantity': 1, 'note': 'No onion'},
+      ],
+    });
+
+    expect(lines.any((line) => line.contains('Note:')), isFalse);
+    expect(lines.any((line) => line.contains('No onion')), isFalse);
+  });
 }

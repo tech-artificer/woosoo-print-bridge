@@ -55,6 +55,9 @@ class AppState {
   final String? lastWsError;
   final bool queuePaused;
   final String? queuePauseReason;
+  final DateTime? lastQueueTick;
+  final int? lastSelectedPrintEventId;
+  final String? lastQueueSkipReason;
 
   const AppState({
     required this.initialized,
@@ -80,6 +83,9 @@ class AppState {
     this.lastWsError,
     this.queuePaused = false,
     this.queuePauseReason,
+    this.lastQueueTick,
+    this.lastSelectedPrintEventId,
+    this.lastQueueSkipReason,
   });
 
   int get pendingCount =>
@@ -113,6 +119,9 @@ class AppState {
     String? lastWsError,
     bool? queuePaused,
     Object? queuePauseReason = _unset,
+    DateTime? lastQueueTick,
+    Object? lastSelectedPrintEventId = _unset,
+    Object? lastQueueSkipReason = _unset,
   }) =>
       AppState(
         initialized: initialized ?? this.initialized,
@@ -146,5 +155,12 @@ class AppState {
         queuePauseReason: queuePauseReason == _unset
             ? this.queuePauseReason
             : queuePauseReason as String?,
+        lastQueueTick: lastQueueTick ?? this.lastQueueTick,
+        lastSelectedPrintEventId: lastSelectedPrintEventId == _unset
+            ? this.lastSelectedPrintEventId
+            : lastSelectedPrintEventId as int?,
+        lastQueueSkipReason: lastQueueSkipReason == _unset
+            ? this.lastQueueSkipReason
+            : lastQueueSkipReason as String?,
       );
 }

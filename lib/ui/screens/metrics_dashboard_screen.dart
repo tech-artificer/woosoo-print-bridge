@@ -80,6 +80,37 @@ class MetricsDashboardScreen extends ConsumerWidget {
                     valueKey: const Key('metric_success_rate')),
               ]),
               const SizedBox(height: 12),
+              _card('Queue Worker', [
+                if (pending > 0 &&
+                    _isBlockingQueueReason(st.lastQueueSkipReason))
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.errorContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Pending jobs blocked - ${st.lastQueueSkipReason}',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onErrorContainer,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                _kv('Last Tick', _formatDate(st.lastQueueTick),
+                    valueKey: const Key('metric_queue_last_tick')),
+                _kv(
+                    'Last Job',
+                    st.lastSelectedPrintEventId == null
+                        ? 'â€”'
+                        : 'print_event_id=${st.lastSelectedPrintEventId}',
+                    valueKey: const Key('metric_queue_last_job')),
+                _kv('Skip Reason', st.lastQueueSkipReason ?? 'â€”',
+                    valueKey: const Key('metric_queue_skip_reason')),
+              ]),
+              const SizedBox(height: 12),
               _card('Reconnect Metrics', [
                 _kv('Reconnect Attempts (Total)', reconnectTotal.toString(),
                     valueKey: const Key('metric_reconnect_total')),
@@ -212,6 +243,14 @@ class MetricsDashboardScreen extends ConsumerWidget {
   }
 
   String _formatDate(DateTime? dt) => dt == null ? '—' : dt.toIso8601String();
+
+  bool _isBlockingQueueReason(String? reason) => {
+        'queue_paused',
+        'printer_no_address',
+        'printer_disconnected',
+        'printer_reconnect_backoff',
+        'printer_reconnect_max_attempts',
+      }.contains(reason);
 
   String _prettyStatus(PrintJobStatus status) {
     final text = status.name.replaceAll('_', ' ');

@@ -111,6 +111,9 @@ class AppController extends StateNotifier<AppState> {
           metricsTrackingSince: null,
           queuePaused: false,
           queuePauseReason: null,
+          lastQueueTick: null,
+          lastSelectedPrintEventId: null,
+          lastQueueSkipReason: null,
         ));
 
   Duration get uptime => DateTime.now().toUtc().difference(_bootedAt);
@@ -188,6 +191,8 @@ class AppController extends StateNotifier<AppState> {
     log.i(
         'Session resolution complete: sessionId=${state.sessionId ?? "NULL"}');
 
+    _startQueueProcessor();
+
     log.i('STEP 3: Start WebSocket');
     _startWs();
 
@@ -197,7 +202,6 @@ class AppController extends StateNotifier<AppState> {
         'Polling service status: ${_polling != null ? "INITIALIZED" : "NULL"}');
 
     _startHeartbeat();
-    _startQueueProcessor();
 
     await WakelockPlus.enable();
     _startWsStatusMonitor();
@@ -698,6 +702,8 @@ class AppController extends StateNotifier<AppState> {
         state = state.copyWith(queue: await store.all());
         log.i(
             'Requeued duplicate unacknowledged print_event_id=$printEventId from local status=${existing.status.name}');
+        log.i('Auto queue trigger after requeue: print_event_id=$printEventId');
+        unawaited(_processQueue());
         return;
       }
 
@@ -742,6 +748,8 @@ class AppController extends StateNotifier<AppState> {
     await store.upsert(job);
     state = state.copyWith(queue: await store.all());
     log.i('Enqueued print_event_id=$printEventId order_id=$oId');
+    log.i('Auto queue trigger after enqueue: print_event_id=$printEventId');
+    unawaited(_processQueue());
   }
 
   Future<bool> connectPrinterByAddress(String address, {String? name}) async {
@@ -1086,15 +1094,31 @@ class AppController extends StateNotifier<AppState> {
     await _jobStateLock.synchronized(() async {
       PrintJob? activeJob;
       try {
-        if (state.queuePaused) return;
+        log.i('[queue] tick');
+        state = state.copyWith(lastQueueTick: DateTime.now().toUtc());
+        if (state.queuePaused) {
+          log.i('[queue] skip: queue_paused');
+          state = state.copyWith(lastQueueSkipReason: 'queue_paused');
+          return;
+        }
 
         final store = ref.read(queueStoreProvider);
         await _recoverStalePrintingJobs(store);
 
         final printer = ref.read(printerServiceProvider);
         final isConnected = await printer.isConnected();
+        final printerAddress = state.config.printerAddress ?? '';
 
-        if (!isConnected && (state.config.printerAddress ?? '').isNotEmpty) {
+        if (!isConnected && printerAddress.isEmpty) {
+          log.i('[queue] skip: printer_no_address');
+          state = state.copyWith(
+            printer: state.printer.copyWith(connected: false),
+            lastQueueSkipReason: 'printer_no_address',
+          );
+          return;
+        }
+
+        if (!isConnected && printerAddress.isNotEmpty) {
           // M3.5-3: Check printer reconnect backoff before attempting reconnection
           final jobs = await store.all();
           final pendingJobs =
@@ -1125,6 +1149,9 @@ class AppController extends StateNotifier<AppState> {
 
             final shouldReconnect = await _shouldReconnectPrinter(next);
             if (!shouldReconnect) {
+              log.i('[queue] skip: printer_reconnect_backoff');
+              state = state.copyWith(
+                  lastQueueSkipReason: 'printer_reconnect_backoff');
               return;
             }
 
@@ -1175,7 +1202,11 @@ class AppController extends StateNotifier<AppState> {
         state = state.copyWith(
             printer: state.printer.copyWith(connected: connected));
 
-        if (!connected) return;
+        if (!connected) {
+          log.i('[queue] skip: printer_disconnected');
+          state = state.copyWith(lastQueueSkipReason: 'printer_disconnected');
+          return;
+        }
 
         final jobs = await store.all();
         final next =
@@ -1183,8 +1214,17 @@ class AppController extends StateNotifier<AppState> {
                 ? null
                 : jobs.where((j) => j.status == PrintJobStatus.pending).first;
 
-        if (next == null) return;
+        if (next == null) {
+          log.i('[queue] skip: no_pending_job');
+          state = state.copyWith(lastQueueSkipReason: 'no_pending_job');
+          return;
+        }
         activeJob = next;
+        log.i('[queue] selected: print_event_id=${next.printEventId}');
+        state = state.copyWith(
+          lastSelectedPrintEventId: next.printEventId,
+          lastQueueSkipReason: null,
+        );
 
         await store.updateJob(next.printEventId,
             (old) => old.copyWith(status: PrintJobStatus.printing));
@@ -1202,6 +1242,8 @@ class AppController extends StateNotifier<AppState> {
         final okPrint = await printer.printLines(receiptLines);
         if (!okPrint) {
           if (wasConnectedBeforePrint) {
+            log.w(
+                '[queue] failure: print_event_id=${next.printEventId} error=printer_attention_required');
             await store.updateJob(
                 next.printEventId,
                 (old) => old.copyWith(
@@ -1214,6 +1256,8 @@ class AppController extends StateNotifier<AppState> {
             state = state.copyWith(queue: await store.all());
             return;
           }
+          log.w(
+              '[queue] failure: print_event_id=${next.printEventId} error=print_command_failed');
           await _handlePrintFailure(next, 'Print command failed');
           return;
         }
@@ -1255,9 +1299,12 @@ class AppController extends StateNotifier<AppState> {
           await store.updateJob(next.printEventId,
               (old) => old.copyWith(lastError: 'ACK failed, queued for retry'));
         }
+        log.i('[queue] success: print_event_id=${next.printEventId}');
         state = state.copyWith(queue: await store.all());
       } catch (e) {
         if (activeJob != null) {
+          log.w(
+              '[queue] failure: print_event_id=${activeJob.printEventId} error=$e');
           try {
             await _handlePrintFailure(activeJob, 'Queue error: $e');
           } catch (failureError) {
@@ -1603,7 +1650,9 @@ class AppController extends StateNotifier<AppState> {
     _hb?.stop();
     _ws?.disconnect();
     _connectivitySub?.cancel();
-    unawaited(ref.read(queueStoreProvider).close());
+    try {
+      unawaited(ref.read(queueStoreProvider).close());
+    } catch (_) {}
     log.dispose();
     super.dispose();
   }

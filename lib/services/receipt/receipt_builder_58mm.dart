@@ -73,11 +73,9 @@ class ReceiptBuilder58mm {
         final m = Map<String, dynamic>.from(it as Map);
         final name = (m['name'] ?? '').toString();
         final qty = (m['quantity'] ?? 1).toString();
-        final note = (m['note'] ?? '').toString().trim();
 
         // Format: {qty} {name}
         lines.add('$qty $name');
-        if (note.isNotEmpty) lines.addAll(_wrapIndented('Note: $note'));
       }
     }
 
@@ -117,28 +115,4 @@ class ReceiptBuilder58mm {
   String _equals() => '=' * width;
 
   String _stars() => '*' * width;
-
-  List<String> _wrapIndented(String s) {
-    const indent = '  ';
-    final max = width - indent.length;
-    return _wrap(s, max).map((c) => indent + c).toList();
-  }
-
-  List<String> _wrap(String s, int maxLen) {
-    final words = s.trim().split(RegExp(r'\s+'));
-    final out = <String>[];
-    var line = '';
-    for (final w in words) {
-      if (line.isEmpty) {
-        line = w;
-      } else if (line.length + 1 + w.length <= maxLen) {
-        line = '$line $w';
-      } else {
-        out.add(line);
-        line = w;
-      }
-    }
-    if (line.isNotEmpty) out.add(line);
-    return out.isEmpty ? [''] : out;
-  }
 }
