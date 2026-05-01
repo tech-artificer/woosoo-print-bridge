@@ -66,7 +66,17 @@ class _RelayAppState extends ConsumerState<RelayApp> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => ref.read(appControllerProvider.notifier).init());
+    unawaited(() async {
+      try {
+        await Future<void>.microtask(
+            () => ref.read(appControllerProvider.notifier).init());
+      } catch (error, stack) {
+        unawaited(_logCrashToFile('AppInitError: $error\n$stack'));
+        if (!kReleaseMode) {
+          debugPrint('AppInitError: $error');
+        }
+      }
+    }());
   }
 
   @override

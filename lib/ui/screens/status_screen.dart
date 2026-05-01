@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import '../../models/print_job.dart';
 import '../../services/test_print_service.dart';
 import '../../state/app_controller.dart';
+import '../../state/app_state.dart';
+import '../helpers/printer_ui_rules.dart';
 
 class StatusScreen extends ConsumerWidget {
   const StatusScreen({super.key});
@@ -19,7 +21,7 @@ class StatusScreen extends ConsumerWidget {
     final printingCount =
         queue.where((j) => j.status == PrintJobStatus.printing).length;
     final awaitingAckCount = queue
-        .where((j) => j.status == PrintJobStatus.printed_awaiting_ack)
+        .where((j) => j.status == PrintJobStatus.printedAwaitingAck)
         .length;
     final lastJobTime = queue.isEmpty
         ? null
@@ -77,6 +79,20 @@ class StatusScreen extends ConsumerWidget {
               _card('Printer', [
                 _kvWithIndicator('Connected', st.printer.connected,
                     onlineText: 'Ready', offlineText: 'Not connected'),
+                _kv(
+                    'Verification Mode',
+                    st.config.strictStatusRequired
+                        ? 'Strict status'
+                        : 'Compatible (connected-only)'),
+                _kv('Health', _printerHealthLabel(st.printer)),
+                _kv('Status Check',
+                    st.printer.statusSupported ? 'Supported' : 'Unsupported'),
+                _kv('Paper', st.printer.paperOk ? 'OK' : 'Not OK'),
+                _kv('Cover', st.printer.coverClosed ? 'Closed' : 'Open'),
+                _kv('Offline', st.printer.offline ? 'Yes' : 'No'),
+                _kv('Last Health Check',
+                    _formatDate(st.printer.lastHealthCheckAt)),
+                _kv('Raw Status', st.printer.rawStatus?.join(', ') ?? '—'),
                 _kv('Name', st.config.printerName ?? '—'),
                 _kv('Address', st.config.printerAddress ?? '—'),
                 if ((st.printer.error ?? '').isNotEmpty)
@@ -85,6 +101,19 @@ class StatusScreen extends ConsumerWidget {
                     child: Text('Error: ${st.printer.error}',
                         style: TextStyle(
                             color: Theme.of(context).colorScheme.error)),
+                  ),
+                if (!st.config.strictStatusRequired &&
+                    st.printer.connected &&
+                    !st.printer.statusSupported)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Printer does not support status read. Printing can continue in compatible mode, but paper-out cannot be verified.',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                        fontSize: 12,
+                      ),
+                    ),
                   ),
                 const SizedBox(height: 8),
                 Wrap(
@@ -126,7 +155,8 @@ class StatusScreen extends ConsumerWidget {
               const SizedBox(height: 16),
               _card('Queue Worker', [
                 if (st.pendingCount > 0 &&
-                    _isBlockingQueueReason(st.lastQueueSkipReason))
+                    printerQueueReasonIsBlocking(
+                        st.lastQueueSkipReason, st.config.strictStatusRequired))
                   Container(
                     width: double.infinity,
                     margin: const EdgeInsets.only(bottom: 8),
@@ -235,13 +265,14 @@ class StatusScreen extends ConsumerWidget {
 
   String _formatDate(DateTime? dt) => dt == null ? 'â€”' : dt.toIso8601String();
 
-  bool _isBlockingQueueReason(String? reason) => {
-        'queue_paused',
-        'printer_no_address',
-        'printer_disconnected',
-        'printer_reconnect_backoff',
-        'printer_reconnect_max_attempts',
-      }.contains(reason);
+  String _printerHealthLabel(PrinterStatus printer) {
+    if (!printer.connected) return 'Disconnected';
+    if (!printer.statusSupported) return 'Status unsupported';
+    if (!printer.paperOk) return 'Paper out';
+    if (!printer.coverClosed) return 'Cover open';
+    if (printer.offline) return 'Offline';
+    return 'Ready';
+  }
 
   Future<void> _connectPrinter(BuildContext context, WidgetRef ref) async {
     final ctrl = ref.read(appControllerProvider.notifier);

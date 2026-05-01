@@ -45,7 +45,7 @@ void main() {
         printType: 'REFILL',
         refillNumber: 2,
         payload: {},
-        status: PrintJobStatus.printed_awaiting_ack,
+        status: PrintJobStatus.printedAwaitingAck,
         retryCount: 1,
         lastError: null,
         createdAt: DateTime.utc(2026, 4, 8, 12, 0, 0),

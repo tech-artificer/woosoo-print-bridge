@@ -3,6 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/print_job.dart';
 import '../../state/app_controller.dart';
+import '../../state/app_state.dart';
+import '../helpers/printer_ui_rules.dart';
 
 class MetricsDashboardScreen extends ConsumerWidget {
   const MetricsDashboardScreen({super.key});
@@ -58,6 +60,15 @@ class MetricsDashboardScreen extends ConsumerWidget {
               _card('Printer Health', [
                 _kvWithIndicator('Printer', st.printer.connected,
                     onlineText: 'Connected', offlineText: 'Disconnected'),
+                _kv('Health', _printerHealthLabel(st.printer)),
+                _kv('Status Check',
+                    st.printer.statusSupported ? 'Supported' : 'Unsupported'),
+                _kv('Paper', st.printer.paperOk ? 'OK' : 'Not OK'),
+                _kv('Cover', st.printer.coverClosed ? 'Closed' : 'Open'),
+                _kv('Offline', st.printer.offline ? 'Yes' : 'No'),
+                _kv('Last Health Check',
+                    _formatDate(st.printer.lastHealthCheckAt)),
+                _kv('Raw Status', st.printer.rawStatus?.join(', ') ?? '—'),
                 _kv('Name', st.config.printerName ?? '—'),
                 _kv('Address', st.config.printerAddress ?? '—'),
                 _kv('Last Error', printerError.isEmpty ? '—' : printerError),
@@ -82,7 +93,10 @@ class MetricsDashboardScreen extends ConsumerWidget {
               const SizedBox(height: 12),
               _card('Queue Worker', [
                 if (pending > 0 &&
-                    _isBlockingQueueReason(st.lastQueueSkipReason))
+                    printerQueueReasonIsBlocking(
+                      st.lastQueueSkipReason,
+                      st.config.strictStatusRequired,
+                    ))
                   Container(
                     width: double.infinity,
                     margin: const EdgeInsets.only(bottom: 8),
@@ -244,13 +258,14 @@ class MetricsDashboardScreen extends ConsumerWidget {
 
   String _formatDate(DateTime? dt) => dt == null ? '—' : dt.toIso8601String();
 
-  bool _isBlockingQueueReason(String? reason) => {
-        'queue_paused',
-        'printer_no_address',
-        'printer_disconnected',
-        'printer_reconnect_backoff',
-        'printer_reconnect_max_attempts',
-      }.contains(reason);
+  String _printerHealthLabel(PrinterStatus printer) {
+    if (!printer.connected) return 'Disconnected';
+    if (!printer.statusSupported) return 'Status unsupported';
+    if (!printer.paperOk) return 'Paper out';
+    if (!printer.coverClosed) return 'Cover open';
+    if (printer.offline) return 'Offline';
+    return 'Ready';
+  }
 
   String _prettyStatus(PrintJobStatus status) {
     final text = status.name.replaceAll('_', ' ');
@@ -263,7 +278,7 @@ class MetricsDashboardScreen extends ConsumerWidget {
         return Icons.schedule;
       case PrintJobStatus.printing:
         return Icons.print;
-      case PrintJobStatus.printed_awaiting_ack:
+      case PrintJobStatus.printedAwaitingAck:
         return Icons.timelapse;
       case PrintJobStatus.success:
         return Icons.check_circle;
@@ -281,7 +296,7 @@ class MetricsDashboardScreen extends ConsumerWidget {
         return cs.secondary;
       case PrintJobStatus.printing:
         return cs.primary;
-      case PrintJobStatus.printed_awaiting_ack:
+      case PrintJobStatus.printedAwaitingAck:
         return cs.primaryContainer;
       case PrintJobStatus.success:
         return cs.tertiary;

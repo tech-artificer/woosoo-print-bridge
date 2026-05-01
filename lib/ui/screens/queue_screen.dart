@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/print_job.dart';
+import '../helpers/printer_ui_rules.dart';
 import '../../state/app_controller.dart';
 
 class QueueScreen extends ConsumerStatefulWidget {
@@ -13,6 +14,7 @@ class QueueScreen extends ConsumerStatefulWidget {
 
 class _QueueScreenState extends ConsumerState<QueueScreen> {
   PrintJobStatus? filter;
+  bool _resuming = false;
 
   @override
   Widget build(BuildContext context) {
@@ -59,9 +61,9 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
               ),
               ChoiceChip(
                 label: const Text('Awaiting ACK'),
-                selected: filter == PrintJobStatus.printed_awaiting_ack,
+                selected: filter == PrintJobStatus.printedAwaitingAck,
                 onSelected: (_) => setState(
-                    () => filter = PrintJobStatus.printed_awaiting_ack),
+                    () => filter = PrintJobStatus.printedAwaitingAck),
               ),
               ChoiceChip(
                 label: const Text('Success'),
@@ -78,6 +80,37 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
             ],
           ),
           const SizedBox(height: 12),
+          if (st.pendingCount > 0 &&
+              printerQueueReasonIsBlocking(
+                st.lastQueueSkipReason,
+                st.config.strictStatusRequired,
+              )) ...[
+            Card(
+              color: Theme.of(context).colorScheme.errorContainer,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.block,
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Blocked: ${st.lastQueueSkipReason}',
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onErrorContainer,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
           if (st.queuePaused) ...[
             Card(
               color: Theme.of(context).colorScheme.errorContainer,
@@ -101,9 +134,29 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
                       ),
                     ),
                     FilledButton(
-                      onPressed: () => ctrl.resumeQueue(),
-                      child: const Text('Resume'),
-                    ),
+                      onPressed: _resuming
+                          ? null
+                          : () async {
+                              setState(() => _resuming = true);
+                              try {
+                                await ctrl.resumeAndProcessPending();
+                              } catch (e) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('Resume failed: $e')),
+                                );
+                              } finally {
+                                if (mounted) setState(() => _resuming = false);
+                              }
+                            },
+                      child: _resuming
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Text('Resume and process pending'),
+                      ),
                   ],
                 ),
               ),
@@ -353,7 +406,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
         return cs.secondary;
       case PrintJobStatus.printing:
         return cs.primary;
-      case PrintJobStatus.printed_awaiting_ack:
+      case PrintJobStatus.printedAwaitingAck:
         return cs.primaryContainer;
       case PrintJobStatus.success:
         return cs.tertiary;

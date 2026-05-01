@@ -1,7 +1,7 @@
 enum PrintJobStatus {
   pending,              // Job waiting to print
   printing,             // Job actively printing
-  printed_awaiting_ack, // Job printed locally, waiting for server ACK
+  printedAwaitingAck, // Job printed locally, waiting for server ACK
   success,              // Job printed AND acknowledged by server
   failed,               // Job failed after max retries
   cancelled             // Job explicitly cancelled

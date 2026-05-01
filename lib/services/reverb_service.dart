@@ -92,8 +92,9 @@ class ReverbService {
       // Do NOT send pusher:subscribe here — wait for pusher:connection_established
       // from the server before subscribing (Pusher protocol requirement).
 
-      _sub = _ch!.stream.listen((msg) async => _handleMessage(msg),
-          onError: (e, st) {
+      _sub = _ch!.stream.listen((msg) {
+        unawaited(_handleMessageSafely(msg));
+      }, onError: (e, st) {
         log.e('WS error', e, st);
         _connected = false;
         onDisconnect?.call(e.toString());
@@ -121,8 +122,25 @@ class ReverbService {
           ? 'TLS certificate validation failed for Reverb host. Install a trusted certificate on device and server before running release builds. Raw: $rawError'
           : rawError;
 
-      onError?.call(message);
+      _notifyError(message);
       _scheduleReconnect();
+    }
+  }
+
+  void _notifyError(String message) {
+    try {
+      onError?.call(message);
+    } catch (e, st) {
+      log.e('WS error callback failed', e, st);
+    }
+  }
+
+  Future<void> _handleMessageSafely(dynamic raw) async {
+    try {
+      await _handleMessage(raw);
+    } catch (e, st) {
+      log.e('WS message handler failed', e, st);
+      _notifyError('WS message handler failed: $e');
     }
   }
 
@@ -155,7 +173,7 @@ class ReverbService {
     if (event == 'pusher:error') {
       final data = msg['data'];
       log.e('[WS] Pusher error: $data');
-      onError?.call('Pusher error: $data');
+      _notifyError('Pusher error: $data');
       return;
     }
 

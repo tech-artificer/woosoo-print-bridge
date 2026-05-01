@@ -12,6 +12,10 @@ import 'package:woosoo_relay_device/state/app_controller.dart';
 
 class _FakePrinter implements PrinterService {
   bool connected = true;
+  PrinterHealthResult health = PrinterHealthResult.ready(
+    checkedAt: DateTime.utc(2026, 4, 29),
+    rawStatus: const [18, 18, 18],
+  );
   final List<List<String>> printedBatches = [];
 
   @override
@@ -38,6 +42,16 @@ class _FakePrinter implements PrinterService {
   Future<bool> isConnected() async => connected;
 
   @override
+  Stream<PrinterConnectionStatus> watchConnectionStatus() =>
+      const Stream.empty();
+
+  @override
+  Future<PrinterHealthResult> checkHealth({
+    Duration timeout = const Duration(seconds: 2),
+  }) async =>
+      connected ? health : PrinterHealthResult.disconnected();
+
+  @override
   Future<bool> printLines(List<String> lines) async {
     printedBatches.add(lines);
     return true;
@@ -62,6 +76,7 @@ class _AckingApiService extends ApiService {
     String? printerName,
     String? bluetoothAddress,
     String? appVersion,
+    String? verificationMode,
   }) async {
     printedEventIds.add(printEventId);
     return true;
@@ -117,6 +132,23 @@ void main() {
     await store.close();
   });
 
+  Future<void> waitForAck(int printEventId) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      if (api.printedEventIds.contains(printEventId)) return;
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  }
+
+  Future<void> waitForJobStatus(int printEventId, PrintJobStatus status) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 3));
+    while (DateTime.now().isBefore(deadline)) {
+      final job = await store.get(printEventId);
+      if (job?.status == status) return;
+      await Future<void>.delayed(const Duration(milliseconds: 25));
+    }
+  }
+
   test('requeued duplicate failed print event resets retry state and prints',
       () async {
     await store.upsert(_job(3, PrintJobStatus.failed).copyWith(
@@ -136,7 +168,8 @@ void main() {
       ],
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForAck(3);
+    await waitForJobStatus(3, PrintJobStatus.success);
 
     final job = await store.get(3);
     expect(job, isNotNull);
@@ -164,7 +197,8 @@ void main() {
       ],
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForAck(10);
+    await waitForJobStatus(10, PrintJobStatus.success);
 
     final job = await store.get(10);
     expect(printer.printedBatches, hasLength(1));
@@ -191,7 +225,8 @@ void main() {
       ],
     });
 
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await waitForAck(11);
+    await waitForJobStatus(11, PrintJobStatus.success);
 
     final job = await store.get(11);
     expect(printer.printedBatches, hasLength(1));
@@ -221,14 +256,15 @@ void main() {
     expect(api.printedEventIds, isEmpty);
   });
 
-  test('records queue paused skip reason', () async {
+  test('auto-resumes paused queue then records no pending job reason', () async {
     final controller = container.read(appControllerProvider.notifier);
     controller.pauseQueueForPrinterAttention('Paper out');
 
     await controller.processQueueOnce();
 
-    expect(container.read(appControllerProvider).lastQueueSkipReason,
-        'queue_paused');
+    final state = container.read(appControllerProvider);
+    expect(state.queuePaused, isFalse);
+    expect(state.lastQueueSkipReason, 'no_pending_job');
   });
 
   test('records no pending job skip reason', () async {

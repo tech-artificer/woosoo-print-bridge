@@ -69,10 +69,11 @@ class _OperationalToolsScreenState
                     ),
                   ),
                   _actionButton(
-                    label: 'Resume Queue',
+                    label: 'Resume and process pending',
                     icon: Icons.play_arrow,
-                    onPressed: () =>
-                        _runAction('Resume Queue', ctrl.resumeQueue),
+                    onPressed: () => _runAction(
+                        'Resume and process pending',
+                        ctrl.resumeAndProcessPending),
                   ),
                 ],
               ),

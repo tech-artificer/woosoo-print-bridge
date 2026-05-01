@@ -305,7 +305,7 @@ class _OrderRow extends StatelessWidget {
       case PrintJobStatus.cancelled:
         return Icons.cancel;
       case PrintJobStatus.printing:
-      case PrintJobStatus.printed_awaiting_ack:
+      case PrintJobStatus.printedAwaitingAck:
         return Icons.sync;
       case PrintJobStatus.pending:
         return Icons.schedule;
@@ -321,7 +321,7 @@ class _OrderRow extends StatelessWidget {
       case PrintJobStatus.cancelled:
         return cs.error;
       case PrintJobStatus.printing:
-      case PrintJobStatus.printed_awaiting_ack:
+      case PrintJobStatus.printedAwaitingAck:
         return cs.primary;
       case PrintJobStatus.pending:
         return cs.secondary;

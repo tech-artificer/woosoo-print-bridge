@@ -106,11 +106,11 @@ void main() {
       await store.updateJob(
         20,
         (j) => j.copyWith(
-          status: PrintJobStatus.printed_awaiting_ack,
+          status: PrintJobStatus.printedAwaitingAck,
           printedAt: DateTime.utc(2026, 4, 8, 12, 1),
         ),
       );
-      expect((await store.get(20))?.status, PrintJobStatus.printed_awaiting_ack);
+      expect((await store.get(20))?.status, PrintJobStatus.printedAwaitingAck);
       expect((await store.get(20))?.printedAt, isNotNull);
 
       await store.updateJob(20, (j) => j.copyWith(status: PrintJobStatus.success));

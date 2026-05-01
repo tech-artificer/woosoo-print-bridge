@@ -19,6 +19,11 @@ class DeviceConfig {
   /// Persisted so it remains visible after app restarts.
   final String? registrationCode;
 
+  /// Printer verification mode.
+  /// true  => strict ESC/POS status verification is required.
+  /// false => compatible mode (connected-only fallback when status is unsupported).
+  final bool strictStatusRequired;
+
   const DeviceConfig({
     required this.apiBaseUrl,
     required this.wsUrl,
@@ -29,6 +34,7 @@ class DeviceConfig {
     required this.printerId,
     this.reverbAppKey = AppConstants.defaultReverbAppKey,
     this.registrationCode,
+    this.strictStatusRequired = false,
   });
 
   DeviceConfig copyWith({
@@ -41,6 +47,7 @@ class DeviceConfig {
     String? printerId,
     String? reverbAppKey,
     String? registrationCode,
+    bool? strictStatusRequired,
   }) {
     return DeviceConfig(
       apiBaseUrl: apiBaseUrl ?? this.apiBaseUrl,
@@ -52,6 +59,7 @@ class DeviceConfig {
       printerId: printerId ?? this.printerId,
       reverbAppKey: reverbAppKey ?? this.reverbAppKey,
       registrationCode: registrationCode ?? this.registrationCode,
+      strictStatusRequired: strictStatusRequired ?? this.strictStatusRequired,
     );
   }
 

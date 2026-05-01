@@ -8,7 +8,7 @@ class LoggerService {
   IOSink? _sink;
 
   LoggerService() {
-    _logger = Logger(printer: PrettyPrinter(methodCount: 0, printTime: true));
+    _logger = Logger(printer: PrettyPrinter(methodCount: 0, dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart));
   }
 
   Future<void> init() async {

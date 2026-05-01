@@ -66,10 +66,12 @@ class AppController extends StateNotifier<AppState> {
   Timer? _ackFlushTimer;
   Timer? _wsStatusTimer;
   Timer? _printerStatusTimer;
+  Future<void>? _resumeAndProcessPendingFuture;
   // M3.5-1: Single shared lock for ALL job state mutations (prevents collision between _processQueue + flushPendingAcks)
   final _jobStateLock = Lock();
   static const List<int> _printerReconnectBackoffSeconds = [1, 2, 5, 10, 30];
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  StreamSubscription<PrinterConnectionStatus>? _printerConnectionSub;
   final DateTime _bootedAt = DateTime.now().toUtc();
 
   static String _safePlatform() {
@@ -120,7 +122,7 @@ class AppController extends StateNotifier<AppState> {
   int get printingCount =>
       state.queue.where((j) => j.status == PrintJobStatus.printing).length;
   int get awaitingAckCount => state.queue
-      .where((j) => j.status == PrintJobStatus.printed_awaiting_ack)
+      .where((j) => j.status == PrintJobStatus.printedAwaitingAck)
       .length;
   int get reconnectAttemptTotal =>
       state.queue.fold(0, (sum, j) => sum + j.printerReconnectAttempts);
@@ -310,14 +312,52 @@ class AppController extends StateNotifier<AppState> {
   /// Used when calling registration and lookup-by-ip endpoints so the server
   /// stores the real device IP rather than the Docker bridge gateway (172.18.0.1).
   /// Returns null if the IP cannot be determined (no-op fallback).
+  ///
+  /// Prefers physical adapters (Wi-Fi, Ethernet) over virtual ones
+  /// (Docker vEthernet, Hyper-V, WSL, VirtualBox) to avoid returning
+  /// a bridge/host-only adapter IP on Windows with Docker Desktop.
   Future<String?> _getDeviceLanIp() async {
+    // Virtual/bridge adapter name fragments to deprioritize on Windows.
+    const virtualFragments = [
+      'vethernet', 'hyper-v', 'wsl', 'loopback adapter',
+      'virtualbox', 'vmware', 'docker', 'bluetooth',
+    ];
+
+    bool isVirtual(String name) {
+      final lower = name.toLowerCase();
+      return virtualFragments.any((f) => lower.contains(f));
+    }
+
     try {
       final interfaces = await NetworkInterface.list(
           type: InternetAddressType.IPv4, includeLinkLocal: false);
+
+      // Log all candidates for diagnostics.
       for (final iface in interfaces) {
         for (final addr in iface.addresses) {
           if (!addr.isLoopback) {
-            log.i('Detected LAN IP: ${addr.address} (${iface.name})');
+            log.i('LAN IP candidate: ${addr.address} (${iface.name})'
+                '${isVirtual(iface.name) ? " [virtual — skipped in first pass]" : ""}');
+          }
+        }
+      }
+
+      // First pass: prefer physical adapters.
+      for (final iface in interfaces) {
+        if (isVirtual(iface.name)) continue;
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            log.i('Selected LAN IP: ${addr.address} (${iface.name}) [physical]');
+            return addr.address;
+          }
+        }
+      }
+
+      // Second pass: fall back to any non-loopback if no physical found.
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          if (!addr.isLoopback) {
+            log.w('Selected LAN IP: ${addr.address} (${iface.name}) [fallback — no physical adapter found]');
             return addr.address;
           }
         }
@@ -514,24 +554,105 @@ class AppController extends StateNotifier<AppState> {
 
   void _startPrinterStatusMonitor() {
     _printerStatusTimer?.cancel();
+    _printerConnectionSub?.cancel();
+
+    final printer = ref.read(printerServiceProvider);
+    _printerConnectionSub = printer.watchConnectionStatus().listen((status) {
+      final connected = status == PrinterConnectionStatus.connected;
+      state = state.copyWith(
+        printer: state.printer.copyWith(
+          connected: connected,
+          error: connected ? null : 'Bluetooth printer disconnected.',
+        ),
+        lastQueueSkipReason:
+            connected ? state.lastQueueSkipReason : 'printer_disconnected',
+      );
+      log.i('Printer connection stream changed: $status');
+    }, onError: (Object e, StackTrace st) {
+      log.e('Printer connection stream failed', e, st);
+    });
+
     _printerStatusTimer = Timer.periodic(const Duration(seconds: 5), (_) async {
       // Skip check if printer address not configured
       if ((state.config.printerAddress ?? '').isEmpty) return;
-
+      // Avoid concurrent DLE EOT status queries while an active print is in
+      // flight; overlapping listeners can consume each other's response bytes
+      // and falsely mark the printer unhealthy.
+      if (state.queue.any((j) => j.status == PrintJobStatus.printing)) return;
       try {
-        final printer = ref.read(printerServiceProvider);
-        final connected = await printer.isConnected();
-
-        if (state.printer.connected != connected) {
-          state = state.copyWith(
-              printer: state.printer.copyWith(connected: connected));
-          log.i(
-              'Printer status changed: ${connected ? "Connected" : "Disconnected"}');
-        }
+        final health = await printer.checkHealth();
+        _applyPrinterHealth(health);
       } catch (e) {
         // Suppress errors to avoid log spam
       }
     });
+  }
+
+  void _applyPrinterHealth(PrinterHealthResult health) {
+    state = state.copyWith(
+      printer: state.printer.copyWith(
+        connected: health.connected,
+        statusSupported: health.statusSupported,
+        paperOk: health.paperOk,
+        coverClosed: health.coverClosed,
+        offline: health.offline,
+        lastHealthCheckAt: health.checkedAt,
+        rawStatus: health.rawStatus,
+        error: health.ready ? null : health.operatorMessage,
+      ),
+    );
+  }
+
+  String _printerHealthSkipReason(PrinterHealthResult health) =>
+      health.blockReason;
+
+  bool get _strictStatusRequired => state.config.strictStatusRequired;
+
+  bool _isHardPrinterHealthBlock(PrinterHealthResult health) {
+    if (!health.connected) return true;
+    if (!health.statusSupported) return _strictStatusRequired;
+    if (!health.paperOk) return true;
+    if (!health.coverClosed) return true;
+    if (health.offline) return true;
+    return false;
+  }
+
+  String _ackVerificationMode() =>
+      _strictStatusRequired ? 'strict_status' : 'connected_only';
+
+  Future<bool> _requirePrinterHealth({
+    required PrintJob job,
+    required String phase,
+  }) async {
+    final health = await ref.read(printerServiceProvider).checkHealth();
+    _applyPrinterHealth(health);
+    if (!_isHardPrinterHealthBlock(health)) {
+      if (!health.statusSupported && !_strictStatusRequired) {
+        log.w(
+            '[queue] warning: print_event_id=${job.printEventId} status_unsupported mode=compatible phase=$phase');
+      }
+      return true;
+    }
+
+    final reason = _printerHealthSkipReason(health);
+    final message = '$phase printer health failed: ${health.operatorMessage}';
+    log.w(
+        '[queue] failure: print_event_id=${job.printEventId} error=$reason phase=$phase');
+    await ref.read(queueStoreProvider).updateJob(
+          job.printEventId,
+          (old) => old.copyWith(
+            status: PrintJobStatus.pending,
+            lastError: message,
+          ),
+        );
+    state = state.copyWith(
+      queue: await ref.read(queueStoreProvider).all(),
+      lastError: message,
+      lastQueueSkipReason: reason,
+    );
+    pauseQueueForPrinterAttention(message);
+    state = state.copyWith(lastQueueSkipReason: reason);
+    return false;
   }
 
   void _startNetworkMonitor() {
@@ -554,6 +675,8 @@ class AppController extends StateNotifier<AppState> {
           r == ConnectivityResult.ethernet ||
           r == ConnectivityResult.mobile);
       state = state.copyWith(networkConnected: connected);
+    }).catchError((Object e, StackTrace st) {
+      log.e('Initial network connectivity check failed', e, st);
     });
   }
 
@@ -711,7 +834,7 @@ class AppController extends StateNotifier<AppState> {
         await store.updateJob(
           printEventId,
           (old) => old.copyWith(
-            status: PrintJobStatus.printed_awaiting_ack,
+            status: PrintJobStatus.printedAwaitingAck,
             ackAttempts: 0,
             lastAckAttempt: null,
             lastError: null,
@@ -755,7 +878,16 @@ class AppController extends StateNotifier<AppState> {
   Future<bool> connectPrinterByAddress(String address, {String? name}) async {
     // M3.5-3: Track reconnect attempts and implement exponential backoff [1,2,5,10,30]s
     final printer = ref.read(printerServiceProvider);
-    final ok = await printer.connectByAddress(address);
+    bool ok;
+    try {
+      ok = await printer.connectByAddress(address);
+    } catch (e, st) {
+      log.e('connectPrinterByAddress failed', e, st);
+      state = state.copyWith(
+          printer: state.printer.copyWith(
+              connected: false, error: 'Connect failed: $e'));
+      return false;
+    }
     if (ok) {
       final cfg = state.config.copyWith(
           printerAddress: address,
@@ -851,14 +983,48 @@ class AppController extends StateNotifier<AppState> {
       );
     }
 
-    final ready = await printer.isConnected();
+    final health = await printer.checkHealth();
+    _applyPrinterHealth(health);
+    final blocked = _isHardPrinterHealthBlock(health);
+    final ready = !blocked;
     state = state.copyWith(
       queuePaused: !ready,
-      queuePauseReason: ready ? null : 'Printer is not connected.',
-      lastError: ready ? null : 'Printer is not connected.',
-      printer: state.printer.copyWith(connected: ready),
+      queuePauseReason: ready ? null : health.operatorMessage,
+      lastError: ready ? null : health.operatorMessage,
+      lastQueueSkipReason: ready ? null : health.blockReason,
     );
     if (ready) log.i('Queue resumed');
+  }
+
+  Future<void> resumeAndProcessPending() {
+    final inFlight = _resumeAndProcessPendingFuture;
+    if (inFlight != null) {
+      log.i('resumeAndProcessPending ignored: already running');
+      return inFlight;
+    }
+
+    final future = () async {
+      state = state.copyWith(
+        queuePaused: false,
+        queuePauseReason: null,
+        lastQueueSkipReason: null,
+      );
+      await _processQueue();
+    }();
+
+    _resumeAndProcessPendingFuture = future;
+    future.whenComplete(() {
+      if (identical(_resumeAndProcessPendingFuture, future)) {
+        _resumeAndProcessPendingFuture = null;
+      }
+    });
+    return future;
+  }
+
+  Future<void> setStrictStatusRequired(bool value) async {
+    final cfg = state.config.copyWith(strictStatusRequired: value);
+    await _saveConfig(cfg);
+    state = state.copyWith(config: cfg);
   }
 
   Future<void> cancelJob(int printEventId) async {
@@ -982,6 +1148,29 @@ class AppController extends StateNotifier<AppState> {
       throw StateError(message);
     }
 
+    final preHealth = await printer.checkHealth();
+    _applyPrinterHealth(preHealth);
+    if (_isHardPrinterHealthBlock(preHealth)) {
+      final message =
+          'Pre-print printer health failed: ${preHealth.operatorMessage}';
+      if (acknowledge) {
+        await store.updateJob(
+          job.printEventId,
+          (old) => old.copyWith(
+            status: PrintJobStatus.pending,
+            lastError: message,
+          ),
+        );
+        state = state.copyWith(queue: await store.all());
+      }
+      pauseQueueForPrinterAttention(message);
+      state = state.copyWith(lastQueueSkipReason: preHealth.blockReason);
+      throw StateError(message);
+    } else if (!preHealth.statusSupported && !_strictStatusRequired) {
+      log.w(
+          'Pre-print status unsupported in compatible mode; proceeding for print_event_id=${job.printEventId}');
+    }
+
     final List<String> receiptLines;
     try {
       receiptLines = receipt.build(job.payload);
@@ -1013,6 +1202,39 @@ class AppController extends StateNotifier<AppState> {
       throw StateError(message);
     }
 
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    final postHealth = await printer.checkHealth();
+    _applyPrinterHealth(postHealth);
+    if (_isHardPrinterHealthBlock(postHealth)) {
+      final message =
+          'Post-print printer health failed: ${postHealth.operatorMessage}';
+      if (acknowledge) {
+        await store.updateJob(
+          job.printEventId,
+          (old) => old.copyWith(
+            status: PrintJobStatus.pending,
+            lastError: message,
+          ),
+        );
+        state = state.copyWith(
+          queue: await store.all(),
+          lastError: message,
+          lastQueueSkipReason: postHealth.blockReason,
+        );
+      } else {
+        state = state.copyWith(
+          lastError: message,
+          lastQueueSkipReason: postHealth.blockReason,
+        );
+      }
+      pauseQueueForPrinterAttention(message);
+      state = state.copyWith(lastQueueSkipReason: postHealth.blockReason);
+      throw StateError(message);
+    } else if (!postHealth.statusSupported && !_strictStatusRequired) {
+      log.w(
+          'Post-print status unsupported in compatible mode; using connected-only verification for print_event_id=${job.printEventId}');
+    }
+
     await printer.cut();
 
     if (!acknowledge) {
@@ -1021,11 +1243,33 @@ class AppController extends StateNotifier<AppState> {
       return;
     }
 
+    final connectedBeforePrint = true;
+    final connectedAfterPrint = await printer.isConnected();
+    if (!_strictStatusRequired &&
+        !(connectedBeforePrint && connectedAfterPrint)) {
+      final message =
+          'Post-print connectivity proof failed in compatible mode. ACK withheld.';
+      await store.updateJob(
+        job.printEventId,
+        (old) => old.copyWith(
+          status: PrintJobStatus.pending,
+          lastError: message,
+        ),
+      );
+      state = state.copyWith(
+        queue: await store.all(),
+        lastError: message,
+        lastQueueSkipReason: 'printer_disconnected',
+      );
+      pauseQueueForPrinterAttention(message);
+      throw StateError(message);
+    }
+
     final printedAt = DateTime.now().toUtc();
     await store.updateJob(
       job.printEventId,
       (old) => old.copyWith(
-        status: PrintJobStatus.printed_awaiting_ack,
+        status: PrintJobStatus.printedAwaitingAck,
         printedAt: printedAt,
         lastError: null,
         ackAttempts: 0,
@@ -1042,6 +1286,7 @@ class AppController extends StateNotifier<AppState> {
           printerName: state.config.printerName,
           bluetoothAddress: state.config.printerAddress,
           appVersion: '1.0.0+1',
+          verificationMode: _ackVerificationMode(),
         );
 
     if (ackOk) {
@@ -1097,9 +1342,14 @@ class AppController extends StateNotifier<AppState> {
         log.i('[queue] tick');
         state = state.copyWith(lastQueueTick: DateTime.now().toUtc());
         if (state.queuePaused) {
-          log.i('[queue] skip: queue_paused');
-          state = state.copyWith(lastQueueSkipReason: 'queue_paused');
-          return;
+          log.i('[queue] queue_paused: attempting auto-resume');
+          await resumeQueue();
+          if (state.queuePaused) {
+            log.i('[queue] skip: queue_paused');
+            state = state.copyWith(lastQueueSkipReason: 'queue_paused');
+            return;
+          }
+          log.i('[queue] auto-resumed');
         }
 
         final store = ref.read(queueStoreProvider);
@@ -1207,6 +1457,7 @@ class AppController extends StateNotifier<AppState> {
           state = state.copyWith(lastQueueSkipReason: 'printer_disconnected');
           return;
         }
+        final connectedBeforePrint = connected;
 
         final jobs = await store.all();
         final next =
@@ -1230,7 +1481,6 @@ class AppController extends StateNotifier<AppState> {
             (old) => old.copyWith(status: PrintJobStatus.printing));
         state = state.copyWith(queue: await store.all());
 
-        final wasConnectedBeforePrint = await printer.isConnected();
         final List<String> receiptLines;
         try {
           receiptLines = receipt.build(next.payload);
@@ -1239,36 +1489,62 @@ class AppController extends StateNotifier<AppState> {
           return;
         }
 
+        if (!await _requirePrinterHealth(job: next, phase: 'Pre-print')) {
+          return;
+        }
+
         final okPrint = await printer.printLines(receiptLines);
         if (!okPrint) {
-          if (wasConnectedBeforePrint) {
-            log.w(
-                '[queue] failure: print_event_id=${next.printEventId} error=printer_attention_required');
-            await store.updateJob(
-                next.printEventId,
-                (old) => old.copyWith(
-                      status: PrintJobStatus.pending,
-                      lastError:
-                          'Printer needs attention. Check paper and resume queue.',
-                    ));
-            pauseQueueForPrinterAttention(
-                'Printer needs attention. Check paper and resume queue.');
-            state = state.copyWith(queue: await store.all());
-            return;
-          }
           log.w(
               '[queue] failure: print_event_id=${next.printEventId} error=print_command_failed');
-          await _handlePrintFailure(next, 'Print command failed');
+          await store.updateJob(
+              next.printEventId,
+              (old) => old.copyWith(
+                    status: PrintJobStatus.pending,
+                    lastError:
+                        'Print command failed. Printer status was not confirmed.',
+                  ));
+          pauseQueueForPrinterAttention(
+              'Print command failed. Printer status was not confirmed.');
+          state = state.copyWith(
+            queue: await store.all(),
+            lastQueueSkipReason: 'print_command_failed',
+          );
+          return;
+        }
+
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+        if (!await _requirePrinterHealth(job: next, phase: 'Post-print')) {
           return;
         }
 
         await printer.cut();
 
+        final connectedAfterPrint = await printer.isConnected();
+        if (!_strictStatusRequired &&
+            !(connectedBeforePrint && connectedAfterPrint)) {
+          final message =
+              'Post-print connectivity proof failed in compatible mode. ACK withheld.';
+          await store.updateJob(
+              next.printEventId,
+              (old) => old.copyWith(
+                    status: PrintJobStatus.pending,
+                    lastError: message,
+                  ));
+          state = state.copyWith(
+            queue: await store.all(),
+            lastError: message,
+            lastQueueSkipReason: 'printer_disconnected',
+          );
+          pauseQueueForPrinterAttention(message);
+          return;
+        }
+
         // C2: Mark as printed_awaiting_ack first, queue for retry if ACK fails
         await store.updateJob(
             next.printEventId,
             (old) => old.copyWith(
-                  status: PrintJobStatus.printed_awaiting_ack,
+                  status: PrintJobStatus.printedAwaitingAck,
                   printedAt: DateTime.now().toUtc(),
                   lastError: null,
                   ackAttempts: 0,
@@ -1284,6 +1560,7 @@ class AppController extends StateNotifier<AppState> {
               printerName: state.config.printerName,
               bluetoothAddress: state.config.printerAddress,
               appVersion: '1.0.0+1',
+              verificationMode: _ackVerificationMode(),
             );
 
         if (ackOk) {
@@ -1374,7 +1651,7 @@ class AppController extends StateNotifier<AppState> {
 
         // Find jobs waiting for ACK acknowledgement
         final pending = jobs
-            .where((j) => j.status == PrintJobStatus.printed_awaiting_ack)
+            .where((j) => j.status == PrintJobStatus.printedAwaitingAck)
             .toList();
         if (pending.isEmpty) return;
 
@@ -1442,6 +1719,7 @@ class AppController extends StateNotifier<AppState> {
                 printerName: state.config.printerName,
                 bluetoothAddress: state.config.printerAddress,
                 appVersion: '1.0.0+1',
+                verificationMode: _ackVerificationMode(),
               );
 
           if (ackOk) {
@@ -1610,6 +1888,7 @@ class AppController extends StateNotifier<AppState> {
       printerAddress: sp.getString('printerAddress'),
       printerId: sp.getString('printerId') ?? 'kitchen-printer-01',
       registrationCode: sp.getString('registrationCode'),
+      strictStatusRequired: sp.getBool('strictStatusRequired') ?? false,
     );
     state = state.copyWith(config: cfg);
   }
@@ -1631,6 +1910,7 @@ class AppController extends StateNotifier<AppState> {
     if (cfg.registrationCode != null) {
       await sp.setString('registrationCode', cfg.registrationCode!);
     }
+    await sp.setBool('strictStatusRequired', cfg.strictStatusRequired);
   }
 
   /// Reprint an order immediately without ACKing or mutating the original job.

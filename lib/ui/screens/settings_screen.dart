@@ -17,6 +17,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late TextEditingController _apiCtl;
   late TextEditingController _appKeyCtl;
   late TextEditingController _printerIdCtl;
+  bool _strictStatusRequired = false;
 
   // Derived WS URL — shown read-only, auto-updated as user types
   String _derivedWsUrl = '';
@@ -45,6 +46,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _appKeyCtl = TextEditingController(text: st.config.reverbAppKey);
     _printerIdCtl = TextEditingController(text: st.config.printerId);
     _regCodeCtl = TextEditingController(text: st.config.registrationCode ?? '');
+    _strictStatusRequired = st.config.strictStatusRequired;
     _derivedWsUrl = AppConstants.deriveWsUrl(st.config.apiBaseUrl, appKey: st.config.reverbAppKey);
 
     // Keep derived WS URL label in sync as user edits
@@ -140,6 +142,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             TextField(
               controller: _printerIdCtl,
               decoration: const InputDecoration(labelText: 'Printer ID (backend)'),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Strict status verification'),
+              subtitle: Text(
+                _strictStatusRequired
+                    ? 'Requires ESC/POS status checks before ACK.'
+                    : 'Compatible mode: allows printing when status read is unsupported.',
+              ),
+              value: _strictStatusRequired,
+              onChanged: (v) => setState(() => _strictStatusRequired = v),
             ),
             const SizedBox(height: 8),
             Text(
@@ -279,6 +293,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       wsUrl:         wsUrl,
       reverbAppKey:  key,
       printerId:     _printerIdCtl.text.trim().isNotEmpty ? _printerIdCtl.text.trim() : null,
+      strictStatusRequired: _strictStatusRequired,
     ));
     messenger.showSnackBar(const SnackBar(content: Text('Saved')));
   }
@@ -342,6 +357,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _runTestPrint(BuildContext context, TestPrintService svc) async {
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.of(context);
+    final successColor = Theme.of(context).colorScheme.tertiary;
+    final errorColor = Theme.of(context).colorScheme.error;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -353,7 +370,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     messenger.showSnackBar(
       SnackBar(
         content: Text(result.message),
-        backgroundColor: result.success ? Theme.of(context).colorScheme.tertiary : Theme.of(context).colorScheme.error,
+        backgroundColor: result.success ? successColor : errorColor,
       ),
     );
   }

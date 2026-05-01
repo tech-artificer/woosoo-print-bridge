@@ -8,22 +8,58 @@ class PrinterStatus {
   final String? name;
   final String? address;
   final String? error;
+  final bool statusSupported;
+  final bool paperOk;
+  final bool coverClosed;
+  final bool offline;
+  final DateTime? lastHealthCheckAt;
+  final List<int>? rawStatus;
 
-  const PrinterStatus(
-      {required this.connected,
-      required this.name,
-      required this.address,
-      required this.error});
-  static const empty =
-      PrinterStatus(connected: false, name: null, address: null, error: null);
+  const PrinterStatus({
+    required this.connected,
+    required this.name,
+    required this.address,
+    required this.error,
+    this.statusSupported = false,
+    this.paperOk = false,
+    this.coverClosed = false,
+    this.offline = true,
+    this.lastHealthCheckAt,
+    this.rawStatus,
+  });
+  static const empty = PrinterStatus(
+    connected: false,
+    name: null,
+    address: null,
+    error: null,
+  );
 
-  PrinterStatus copyWith(
-          {bool? connected, String? name, String? address, String? error}) =>
+  PrinterStatus copyWith({
+    bool? connected,
+    String? name,
+    String? address,
+    Object? error = _unset,
+    bool? statusSupported,
+    bool? paperOk,
+    bool? coverClosed,
+    bool? offline,
+    Object? lastHealthCheckAt = _unset,
+    Object? rawStatus = _unset,
+  }) =>
       PrinterStatus(
         connected: connected ?? this.connected,
         name: name ?? this.name,
         address: address ?? this.address,
-        error: error ?? this.error,
+        error: error == _unset ? this.error : error as String?,
+        statusSupported: statusSupported ?? this.statusSupported,
+        paperOk: paperOk ?? this.paperOk,
+        coverClosed: coverClosed ?? this.coverClosed,
+        offline: offline ?? this.offline,
+        lastHealthCheckAt: lastHealthCheckAt == _unset
+            ? this.lastHealthCheckAt
+            : lastHealthCheckAt as DateTime?,
+        rawStatus:
+            rawStatus == _unset ? this.rawStatus : rawStatus as List<int>?,
       );
 }
 

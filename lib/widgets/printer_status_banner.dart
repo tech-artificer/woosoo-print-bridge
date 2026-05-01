@@ -2,38 +2,49 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/app_controller.dart';
+import '../ui/helpers/printer_ui_rules.dart';
 
-/// Global banner displayed on all screens when the printer is disconnected.
-/// Disappears automatically once the printer reconnects.
-/// Mount this above the screen body (e.g. via AppShell or each screen's Column).
 class PrinterStatusBanner extends ConsumerWidget {
   const PrinterStatusBanner({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final st = ref.watch(appControllerProvider);
+    final strictStatusRequired = st.config.strictStatusRequired;
+    final hardBlocked = printerHasHardBlock(st.printer, strictStatusRequired);
+    final unsupportedWarningOnly =
+        printerHasCompatibleStatusWarning(st.printer, strictStatusRequired);
 
-    if (st.printer.connected) return const SizedBox.shrink();
+    if (!hardBlocked && !unsupportedWarningOnly) return const SizedBox.shrink();
 
     final pendingCount = st.pendingCount;
     final hasAddress = (st.config.printerAddress ?? '').isNotEmpty;
+    final label = _label(st, strictStatusRequired: strictStatusRequired);
+    final background = hardBlocked
+        ? Theme.of(context).colorScheme.error
+        : Theme.of(context).colorScheme.tertiaryContainer;
+    final foreground = hardBlocked
+        ? Colors.white
+        : Theme.of(context).colorScheme.onTertiaryContainer;
+    final icon =
+        hardBlocked ? Icons.print_disabled : Icons.warning_amber_rounded;
 
     return Material(
       color: Colors.transparent,
       child: Container(
-        color: Theme.of(context).colorScheme.error,
+        color: background,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            const Icon(Icons.print_disabled, color: Colors.white, size: 18),
+            Icon(icon, color: foreground, size: 18),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 pendingCount > 0
-                    ? 'PRINTER DISCONNECTED — $pendingCount job(s) waiting'
-                    : 'PRINTER DISCONNECTED',
-                style: const TextStyle(
-                  color: Colors.white,
+                    ? '$label - $pendingCount job(s) waiting'
+                    : label,
+                style: TextStyle(
+                  color: foreground,
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
                 ),
@@ -51,7 +62,7 @@ class PrinterStatusBanner extends ConsumerWidget {
                   );
                 },
                 style: TextButton.styleFrom(
-                  foregroundColor: Colors.white,
+                  foregroundColor: foreground,
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   minimumSize: const Size(0, 32),
                 ),
@@ -61,5 +72,18 @@ class PrinterStatusBanner extends ConsumerWidget {
         ),
       ),
     );
+  }
+
+  String _label(dynamic st, {required bool strictStatusRequired}) {
+    if (!st.printer.connected) return 'PRINTER DISCONNECTED';
+    if (!st.printer.statusSupported) {
+      return strictStatusRequired
+          ? 'PRINTER STATUS UNSUPPORTED'
+          : 'PRINTER STATUS UNSUPPORTED (COMPATIBLE MODE: WARNING)';
+    }
+    if (!st.printer.paperOk) return 'PRINTER PAPER OUT';
+    if (!st.printer.coverClosed) return 'PRINTER COVER OPEN';
+    if (st.printer.offline) return 'PRINTER OFFLINE';
+    return 'PRINTER NEEDS ATTENTION';
   }
 }

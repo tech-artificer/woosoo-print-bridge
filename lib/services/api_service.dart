@@ -165,7 +165,8 @@ class ApiService {
       required String printerId,
       String? printerName,
       String? bluetoothAddress,
-      String? appVersion}) async {
+      String? appVersion,
+      String? verificationMode}) async {
     return _retry(() async {
       final body = jsonEncode({
         'printed_at': printedAt.toUtc().toIso8601String(),
@@ -173,6 +174,7 @@ class ApiService {
         'printer_name': printerName,
         'bluetooth_address': bluetoothAddress,
         'app_version': appVersion,
+        if (verificationMode != null) 'verification_mode': verificationMode,
       });
       final url =
           _u(cfg.apiBaseUrl, '/api/printer/print-events/$printEventId/ack');
